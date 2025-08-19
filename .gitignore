@@ -1,0 +1,101 @@
+# === Owl Package Manager ===
+# Built artifacts
+dist/
+out/
+build/
+*.tgz
+
+# === Dependencies ===
+node_modules/
+bun.lockb
+
+# === Development & IDE ===
+# TypeScript build cache
+*.tsbuildinfo
+
+# IDE configurations
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# === Logs & Debug ===
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# === Code Coverage ===
+coverage/
+*.lcov
+.nyc_output/
+
+# === Environment & Secrets ===
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+
+# === Caches ===
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+
+# === OS Generated ===
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# === Testing ===
+.jest/
+coverage/
+test-results/
+playwright-report/
+
+# === Temporary ===
+tmp/
+temp/
+*.tmp
+*.temp
+
+# === Runtime & System ===
+.pid
+*.pid
+*.seed
+*.pid.lock
+
+# === Local Development ===
+# Local test configurations
+test-config.local.*
+# Local development scripts
+dev-scripts/
+# Backup files
+*.bak
+*.backup
+
+
+owl

@@ -1,0 +1,7 @@
+packages = ["bun", "git", "fish", "test-package-main"]
+
+[git]
+:config .gitconfig -> ~/.gitconfig
+
+[fish]
+:config fish -> ~/.config/fish

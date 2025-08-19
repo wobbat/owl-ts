@@ -1,0 +1,106 @@
+# === Owl Directory GitIgnore ===
+# Copy this file to ~/.owl/.gitignore to manage what gets tracked in your owl config directory
+
+# === State & Runtime Files (DO NOT TRACK) ===
+# Package management state
+.state/
+managed.lock
+owl.lock
+
+# Temporary files
+*.tmp
+*.temp
+.owl-temp-*
+
+# Lock files during operations
+*.lock
+.processing-*
+
+# === Backup & Recovery ===
+# Auto-generated backups
+backups/
+*.backup
+*.bak
+config-backup-*
+
+# === Logs & Debug ===
+# Operation logs
+logs/
+*.log
+install-*.log
+error-*.log
+debug-*.log
+
+# === Cache & Generated Files ===
+# Downloaded package files
+cache/
+.cache/
+downloads/
+
+# Generated configuration files
+generated/
+.generated/
+
+# === System & OS Files ===
+# macOS
+.DS_Store
+._*
+
+# Linux
+.directory
+*~
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# === What TO TRACK (Examples) ===
+# Your configuration files should be tracked:
+# !main.owl
+# !hosts/*.owl
+# !scripts/
+# !dotfiles/
+
+# === Security (NEVER TRACK) ===
+# Sensitive information
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+.secrets
+credentials/
+.credentials
+*.token
+*.secret
+auth-*
+.auth
+
+# SSH keys that might end up here
+id_rsa*
+id_ecdsa*
+id_ed25519*
+*.priv
+
+# === Custom Patterns ===
+# Add your own patterns below:
+
+# Ignore large media files that might be accidentally placed here
+*.iso
+*.img
+*.dmg
+*.zip
+*.tar.gz
+*.tar.xz
+
+# Ignore editor temporary files
+.#*
+\#*#
+.swp
+.swo
+
+# Ignore local development overrides
+local/
+*.local
+dev-*
+test-*
