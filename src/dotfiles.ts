@@ -1,9 +1,9 @@
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname } from "path";
 import { $ } from "bun";
 import { ui, spinner, icon } from "./ui";
-import { homedir } from "node:os";
-import { existsSync, lstatSync, mkdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync } from "fs";
 import { loadOwlLock, saveOwlLock, getFileHash } from "./utils/lock";
+import { getHomeDirectory } from "./utils/fs";
 
 interface ConfigAction {
   destination: string;
@@ -14,10 +14,10 @@ interface ConfigAction {
 
 async function analyzeConfigs(configs: Record<string, string>): Promise<ConfigAction[]> {
   const actions: ConfigAction[] = [];
-  const lock = loadOwlLock();
+  const lock = await loadOwlLock();
   
   for (const [destination, source] of Object.entries(configs)) {
-    const home = process.env.HOME || homedir();
+    const home = getHomeDirectory();
     const destinationPath = destination.startsWith("~") ? join(home, destination.slice(1)) : resolve(destination);
     const sourcePath = resolve(source);
     
@@ -79,7 +79,7 @@ async function manageConfigs(configs: Record<string, string>) {
   
   // Show what will be done using consistent styling
   for (const action of actions) {
-    const home = process.env.HOME || homedir();
+    const home = getHomeDirectory();
     const destinationPath = action.destination.startsWith("~") ? join(home, action.destination.slice(1)) : resolve(action.destination);
     
     switch (action.status) {
@@ -102,7 +102,7 @@ async function manageConfigs(configs: Record<string, string>) {
   
   let successCount = 0;
   let errorCount = 0;
-  const lock = loadOwlLock();
+  const lock = await loadOwlLock();
   
   for (const action of toProcess) {
     if (action.status === 'conflict') {
@@ -111,7 +111,7 @@ async function manageConfigs(configs: Record<string, string>) {
     }
     
     try {
-      const home = process.env.HOME || homedir();
+      const home = getHomeDirectory();
       const destinationPath = action.destination.startsWith("~") ? join(home, action.destination.slice(1)) : resolve(action.destination);
       const sourcePath = resolve(action.source);
       
@@ -198,13 +198,13 @@ export async function analyzeConfigsPerPackage(configEntries: Array<{package: st
       
       let successCount = 0;
       let errorCount = 0;
-      const lock = loadOwlLock();
+      const lock = await loadOwlLock();
       
       for (const action of actions) {
         if (action.status === 'skip' || action.status === 'conflict') continue;
         
         try {
-          const home = process.env.HOME || homedir();
+          const home = getHomeDirectory();
           const destinationPath = action.destination.startsWith("~") ? join(home, action.destination.slice(1)) : resolve(action.destination);
           const sourcePath = resolve(action.source);
           
@@ -291,13 +291,13 @@ export async function manageConfigsPerPackage(configEntries: Array<{package: str
       
       let successCount = 0;
       let errorCount = 0;
-      const lock = loadOwlLock();
+      const lock = await loadOwlLock();
       
       for (const action of actions) {
         if (action.status === 'skip' || action.status === 'conflict') continue;
         
         try {
-          const home = process.env.HOME || homedir();
+          const home = getHomeDirectory();
           const destinationPath = action.destination.startsWith("~") ? join(home, action.destination.slice(1)) : resolve(action.destination);
           const sourcePath = resolve(action.source);
           

@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { getHomeDirectory, ensureOwlDirectories } from "./utils/fs";
 
+/**
+ * Ensure that yay (Yet Another Yogurt - an AUR helper) is installed
+ * Yay is required for installing packages from the Arch User Repository
+ */
 export async function ensureYayInstalled(): Promise<void> {
   try {
     await $`which yay`.quiet();
@@ -13,13 +17,18 @@ export async function ensureYayInstalled(): Promise<void> {
   }
 }
 
+/**
+ * Install yay from the Arch User Repository
+ * This involves downloading the source, building it, and installing it
+ */
 async function installYay(): Promise<void> {
   const tempDir = '/tmp/yay-install';
-  
+
   try {
-    // Import spinner here to avoid circular dependencies
+    // Import spinner here to avoid circular dependencies between modules
     const { spinner } = await import("./ui");
-    
+
+    // Step 1: Install prerequisites needed to build yay
     const prereqSpinner = spinner("Installing yay prerequisites...", { enabled: true });
     try {
       await $`sudo pacman -S --needed --noconfirm git base-devel`.quiet();
@@ -28,7 +37,8 @@ async function installYay(): Promise<void> {
       prereqSpinner.fail("Failed to install prerequisites");
       throw error;
     }
-    
+
+    // Step 2: Download yay source code from AUR
     const cloneSpinner = spinner("Downloading yay from AUR...", { enabled: true });
     try {
       await $`rm -rf ${tempDir}`.quiet().catch(() => {});
@@ -38,7 +48,8 @@ async function installYay(): Promise<void> {
       cloneSpinner.fail("Failed to download yay");
       throw error;
     }
-    
+
+    // Step 3: Build and install yay from source
     const buildSpinner = spinner("Building and installing yay...", { enabled: true });
     try {
       const proc = Bun.spawn(['makepkg', '-si', '--noconfirm'], {
@@ -46,22 +57,24 @@ async function installYay(): Promise<void> {
         stdout: 'pipe',
         stderr: 'pipe'
       });
-      
+
       const exitCode = await proc.exited;
       if (exitCode !== 0) {
         buildSpinner.fail("Failed to build yay");
         throw new Error(`makepkg failed with exit code ${exitCode}`);
       }
-      
+
       buildSpinner.stop("yay installed successfully");
     } catch (error: any) {
       buildSpinner.fail("Failed to build yay");
       throw error;
     }
-    
+
+    // Clean up temporary directory
     await $`rm -rf ${tempDir}`.quiet().catch(() => {});
-    
+
   } catch (error) {
+    // Clean up temporary directory on error
     await $`rm -rf ${tempDir}`.quiet().catch(() => {});
     throw new Error(`Failed to install yay: ${error instanceof Error ? error.message : String(error)}`);
   }

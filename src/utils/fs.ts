@@ -1,52 +1,31 @@
-import { join, resolve, dirname } from "node:path";
-import { homedir } from "node:os";
-import { existsSync, mkdirSync, lstatSync } from "node:fs";
-import { $ } from "bun";
+import { join } from "path";
+import { homedir } from "os";
+import { existsSync, mkdirSync } from "fs";
 
 export function getHomeDirectory(): string {
   return process.env.HOME || homedir();
 }
 
+export const OWL_DIR = join(getHomeDirectory(), '.owl');
+export const OWL_STATE_DIR = join(OWL_DIR, '.state');
+
 export function getOwlDirectory(): string {
-  return join(getHomeDirectory(), '.owl');
+  return OWL_DIR;
 }
 
 export function getOwlStateDirectory(): string {
-  return join(getOwlDirectory(), '.state');
+  return OWL_STATE_DIR;
 }
 
 export function ensureOwlDirectories(): void {
-  const owlDir = getOwlDirectory();
-  const stateDir = getOwlStateDirectory();
-  
-  if (!existsSync(owlDir)) {
-    mkdirSync(owlDir, { recursive: true });
-  }
-  
-  if (!existsSync(stateDir)) {
-    mkdirSync(stateDir, { recursive: true });
-  }
+  if (!existsSync(OWL_DIR)) mkdirSync(OWL_DIR, { recursive: true });
+  if (!existsSync(OWL_STATE_DIR)) mkdirSync(OWL_STATE_DIR, { recursive: true });
 }
 
-function resolvePath(path: string): string {
-  const home = getHomeDirectory();
-  return path.startsWith("~") ? join(home, path.slice(1)) : resolve(path);
+/**
+ * Compact filters out null/undefined/empty-string/false values from an array
+ */
+export function compact<T>(array: Array<T | null | undefined | false | "" | 0>): T[] {
+  return array.filter((v): v is T => Boolean(v) && v !== "") as T[];
 }
 
-async function copyFileOrDirectory(sourcePath: string, destinationPath: string): Promise<void> {
-  const parentDir = dirname(destinationPath);
-  if (!existsSync(parentDir)) {
-    mkdirSync(parentDir, { recursive: true });
-  }
-  
-  if (existsSync(destinationPath)) {
-    await $`rm -rf ${destinationPath}`.quiet();
-  }
-  
-  const sourceStats = lstatSync(sourcePath);
-  if (sourceStats.isDirectory()) {
-    await $`cp -r ${sourcePath} ${destinationPath}`.quiet();
-  } else {
-    await $`cp ${sourcePath} ${destinationPath}`.quiet();
-  }
-}

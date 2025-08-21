@@ -1,4 +1,5 @@
 import pc from "picocolors";
+import { SPINNER_FRAME_INTERVAL, PACKAGE_INSTALL_DELAY, DOTFILES_INSTALL_DELAY } from "./constants";
 
 export const icon = {
   ok: pc.green("+"),
@@ -51,8 +52,8 @@ export const ui = {
   header: (mode?: string) => {
     console.log();
     if (mode) {
-      // Create status badge with colored background
-      const badge = mode === 'dry-run' 
+      // Show colored badge for the current mode
+      const badge = mode === 'dry-run'
         ? pc.bgYellow(pc.black(` Dry run `))
         : pc.bgGreen(pc.black(` ${mode} `));
       console.log(` ${badge} `);
@@ -88,20 +89,23 @@ export const ui = {
   },
 
   packageInstallProgress: async (packageName: string, hasDotfiles: boolean = false, streamMode: boolean = false, packageEntry?: any) => {
+    // Show package source (host/group) if available
     const sourcePrefix = packageEntry ? formatPackageSource(packageEntry) : "";
-    process.stdout.write(`${sourcePrefix}${styles.accent(packageName)} ${styles.muted("->")}\n`);
-    
+    console.log(`${sourcePrefix}${styles.accent(packageName)} ${styles.muted("->")}`);
+
     if (!streamMode) {
+      // Show package installation progress
       process.stdout.write(`  Package - ${styles.muted("installing...")}`);
-      await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 200));
+      await new Promise(resolve => setTimeout(resolve, PACKAGE_INSTALL_DELAY));
       process.stdout.write(`\r  Package - ${styles.success("installed")}     \n`);
-      
+
+      // Show dotfiles installation if needed
       if (hasDotfiles) {
         process.stdout.write(`  Dotfiles - ${styles.muted("installing...")}`);
-        await new Promise(resolve => setTimeout(resolve, 200 + Math.random() * 150));
+        await new Promise(resolve => setTimeout(resolve, DOTFILES_INSTALL_DELAY));
         process.stdout.write(`\r  Dotfiles - ${styles.success("installed")}     \n`);
       }
-      
+
       console.log();
     }
   },
@@ -173,7 +177,7 @@ export function spinner(text: string, options: SpinnerOptions = {}) {
     } else {
       process.stdout.write(`\r${color(frame)} ${color(currentText)}  `);
     }
-  }, 100);
+  }, SPINNER_FRAME_INTERVAL);
   
   return {
     stop(suffix?: string) {

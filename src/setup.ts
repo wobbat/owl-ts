@@ -1,7 +1,7 @@
-import { resolve, extname } from "node:path";
+import { resolve, extname } from "path";
 import { $ } from "bun";
 import { ui, spinner, icon } from "./ui";
-import { existsSync } from "node:fs";
+import { existsSync } from "fs";
 import { loadOwlLock, saveOwlLock, getFileHash } from "./utils/lock";
 import { getHomeDirectory } from "./utils/fs";
 
@@ -29,7 +29,7 @@ function getScriptExecutor(scriptPath: string): { command: string; args: string[
 
 async function analyzeSetupScripts(scripts: string[]): Promise<SetupAction[]> {
   const actions: SetupAction[] = [];
-  const lock = loadOwlLock();
+  const lock = await loadOwlLock();
   
   for (const script of scripts) {
     const home = getHomeDirectory();
@@ -118,7 +118,7 @@ export async function runSetupScripts(scripts: string[]) {
   
   let successCount = 0;
   let errorCount = 0;
-  const lock = loadOwlLock();
+  const lock = await loadOwlLock();
   
   for (const action of executable) {
     try {
