@@ -6,6 +6,8 @@ export interface ConfigEntry {
   package: string;
   configs: ConfigMapping[];
   setups: string[];
+  services?: string[];
+  envs?: Array<{ key: string; value: string }>;
   sourceFile?: string;
   sourceType?: 'main' | 'host' | 'group';
   groupName?: string;

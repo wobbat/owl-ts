@@ -22,6 +22,7 @@ export type Command = typeof COMMANDS[number];
 export interface CommandOptions {
   noSpinner: boolean;
   verbose: boolean;
+  debug: boolean;
 }
 
 export interface ParsedCommand {
@@ -42,7 +43,8 @@ export function parseCommand(args: string[]): ParsedCommand {
 
   const options: CommandOptions = {
     noSpinner: restArgs.includes("--no-spinner"),
-    verbose: restArgs.includes("--verbose")
+    verbose: restArgs.includes("--verbose"),
+    debug: restArgs.includes("--debug")
   };
 
   return { command, options };

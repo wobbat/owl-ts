@@ -12,6 +12,8 @@ import {
   removeUnmanagedPackages,
   type PackageAction
 } from "../packages";
+import { manageServices } from "../services";
+import { manageEnvironmentVariables, getEnvironmentVariablesToRemove, setEnvironmentVariables } from "../environment";
 import { hostname } from "os";
 import pc from "picocolors";
 import { $ } from "bun";
@@ -25,17 +27,22 @@ import type { ConfigEntry, ConfigMapping } from "../types";
  */
 export async function handleApplyCommand(dryRun: boolean, options: CommandOptions): Promise<void> {
   // Load and parse all configuration files for this host
-  const configEntries = await safeExecute(
+  const configResult = await safeExecute(
     () => loadConfigForHost(hostname()),
     "Failed to load configuration"
   );
 
-  // Extract all packages, dotfile configs, and setup scripts
+  const configEntries = configResult.entries;
+  const globalEnvs = configResult.globalEnvs;
+
+  // Extract all packages, dotfile configs, setup scripts, services, and environment variables
   const allPackages = configEntries.map(entry => entry.package);
   const allDotfileConfigs = configEntries.flatMap(entry => entry.configs || []);
   const allSetupScripts = configEntries.flatMap(entry => entry.setups || []);
+  const allServices = configEntries.flatMap(entry => entry.services || []);
+  const allEnvironmentVariables = configEntries.flatMap(entry => entry.envs || []);
 
-  ui.header(dryRun ? "Dry run" : "Apply");
+  ui.header(dryRun ? "Dry run" : "Sync");
 
   // Remove duplicate packages
   const uniquePackages = [...new Set(allPackages)];
@@ -45,9 +52,12 @@ export async function handleApplyCommand(dryRun: boolean, options: CommandOption
     await processPackages(uniquePackages, configEntries, allDotfileConfigs, dryRun, options);
   }
 
-  // Process dotfile configurations and setup scripts
+  // Process dotfile configurations, setup scripts, services, and environment variables
   await processConfigs(allDotfileConfigs, configEntries, dryRun);
   await processSetupScripts(allSetupScripts, dryRun);
+  await processServices(allServices, dryRun);
+  await processEnvironmentVariables(allEnvironmentVariables, dryRun, options.debug);
+  await processGlobalEnvironmentVariables(globalEnvs, dryRun, options.debug);
 
   // Show completion message
   if (dryRun) {
@@ -101,7 +111,7 @@ async function processPackages(
 function showPackagesToRemove(toRemove: PackageAction[]): void {
   console.log("Packages to remove (no longer in config):");
   for (const pkg of toRemove) {
-    console.log(`  ${icon.remove} ${pc.white(pkg.name)}`);
+    console.log(`  ${icon.remove} ${pc.cyan(pkg.name)}`);
   }
   console.log();
 }
@@ -127,7 +137,7 @@ async function showDryRunResults(
     if (toRemove.length > 0) {
       console.log("Package removal simulation:");
       for (const pkg of toRemove) {
-        console.log(`  ${icon.remove} Would remove: ${pc.white(pkg.name)}`);
+        console.log(`  ${icon.remove} Would remove: ${pc.cyan(pkg.name)}`);
       }
     }
 
@@ -147,7 +157,7 @@ async function performPackageInstallation(
   options: CommandOptions
 ): Promise<void> {
   if (toRemove.length > 0) {
-    await removePackages(toRemove, options);
+    await removePackages(toRemove, configEntries, options);
   }
 
   await upgradeSystemPackages(options);
@@ -162,11 +172,14 @@ async function performPackageInstallation(
 /**
  * Remove packages that are no longer in config
  */
-async function removePackages(toRemove: PackageAction[], options: CommandOptions): Promise<void> {
+async function removePackages(toRemove: PackageAction[], configEntries: ConfigEntry[], options: CommandOptions): Promise<void> {
   console.log("Package cleanup (removing conflicting packages):");
   for (const pkg of toRemove) {
-    console.log(`  ${icon.remove} Removing: ${pc.white(pkg.name)}`);
+    console.log(`  ${icon.remove} Removing: ${pc.cyan(pkg.name)}`);
   }
+
+  // Clean up environment variables for removed packages
+  await cleanupEnvironmentVariablesForRemovedPackages(toRemove, configEntries);
 
   await safeExecute(
     () => removeUnmanagedPackages(toRemove.map(p => p.name), !options.verbose),
@@ -216,6 +229,24 @@ async function installNewPackages(
       () => installPackages([pkg.name], options.verbose, !options.verbose),
       `Failed to install ${pkg.name}`
     );
+
+    // Manage services for this package if any
+    const configEntry = configEntries.find((entry: ConfigEntry) => entry.package === pkg.name);
+    if (configEntry?.services && configEntry.services.length > 0) {
+      await safeExecute(
+        () => manageServices(configEntry.services!),
+        `Failed to manage services for ${pkg.name}`
+      );
+    }
+
+    // Manage environment variables for this package if any
+    if (configEntry?.envs && configEntry.envs.length > 0) {
+      await safeExecute(
+        () => manageEnvironmentVariables(configEntry.envs!),
+        `Failed to manage environment variables for ${pkg.name}`
+      );
+    }
+
     ui.packageInstallComplete(pkg.name, hasConfigs);
   }
 }
@@ -245,5 +276,101 @@ async function processConfigs(
 async function processSetupScripts(allSetups: string[], dryRun: boolean): Promise<void> {
   if (allSetups.length > 0 && !dryRun) {
     await runSetupScripts(allSetups);
+  }
+}
+
+/**
+ * Process service management
+ */
+async function processServices(allServices: string[], dryRun: boolean): Promise<void> {
+  if (allServices.length > 0) {
+    if (dryRun) {
+      console.log("Services to manage:");
+      for (const serviceName of allServices) {
+        console.log(`  ${icon.ok} Would manage service: ${pc.cyan(serviceName)}`);
+      }
+      console.log();
+    } else {
+      await manageServices(allServices);
+    }
+  }
+}
+
+/**
+ * Process environment variable management
+ */
+async function processEnvironmentVariables(allEnvs: Array<{ key: string; value: string }>, dryRun: boolean, debug: boolean): Promise<void> {
+  if (allEnvs.length > 0) {
+    if (dryRun) {
+      console.log("Environment variables to set:");
+      for (const env of allEnvs) {
+        console.log(`  ${icon.ok} Would set: ${pc.cyan(env.key)}=${pc.green(env.value)}`);
+      }
+      console.log();
+    } else {
+      await setEnvironmentVariables(allEnvs, debug);
+    }
+  }
+}
+
+/**
+ * Process global environment variable management
+ */
+async function processGlobalEnvironmentVariables(globalEnvs: Array<{ key: string; value: string }>, dryRun: boolean, debug: boolean): Promise<void> {
+  if (debug) {
+    console.log(`Processing ${globalEnvs.length} global environment variables`);
+  }
+
+  if (globalEnvs.length > 0) {
+    if (dryRun) {
+      console.log("Global environment variables to set:");
+      for (const env of globalEnvs) {
+        console.log(`  ${icon.ok} Would set global: ${pc.cyan(env.key)}=${pc.green(env.value)}`);
+      }
+      console.log();
+    } else {
+      if (debug) {
+        console.log("Calling manageGlobalEnvironmentVariables...");
+      }
+      // Import the function dynamically to avoid circular dependencies
+      const envModule = await import("../environment");
+      await envModule.manageGlobalEnvironmentVariables(globalEnvs, debug);
+      if (debug) {
+        console.log("manageGlobalEnvironmentVariables completed");
+      }
+    }
+  } else {
+    if (debug) {
+      console.log("No global environment variables to process");
+    }
+    // Still call the function with empty array to ensure files are cleaned up
+    const envModule = await import("../environment");
+    await envModule.manageGlobalEnvironmentVariables(globalEnvs, debug);
+  }
+}
+
+/**
+ * Clean up environment variables for removed packages
+ */
+async function cleanupEnvironmentVariablesForRemovedPackages(
+  toRemove: PackageAction[],
+  configEntries: ConfigEntry[]
+): Promise<void> {
+  const envsToRemove: Array<{ key: string; value: string }> = [];
+
+  for (const pkg of toRemove) {
+    const envs = getEnvironmentVariablesToRemove(pkg.name, configEntries);
+    envsToRemove.push(...envs);
+  }
+
+  if (envsToRemove.length > 0) {
+    console.log("Cleaning up environment variables for removed packages:");
+    for (const env of envsToRemove) {
+      console.log(`  ${icon.remove} Removing env var: ${pc.cyan(env.key)}`);
+    }
+
+    const { removeEnvironmentVariables } = await import("../environment");
+    await removeEnvironmentVariables(envsToRemove);
+    console.log();
   }
 }

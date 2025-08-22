@@ -7,9 +7,15 @@ interface OwlConfigEntry {
   package: string;
   configs: Array<{ source: string; destination: string }>;
   setups: string[];
+  services?: string[];
+  envs?: Array<{ key: string; value: string }>;
   sourceFile?: string; // Track which file this entry came from
   sourceType?: 'main' | 'host' | 'group'; // Track config type
   groupName?: string; // Track group name for group sources
+}
+
+interface GlobalEnvironmentVariables {
+  envs: Array<{ key: string; value: string }>;
 }
 
 class ConfigParseError extends Error {
@@ -109,12 +115,68 @@ function validateDirective(directive: string, args: string, lineNum: number, sou
         throw new ConfigParseError(sourcePath, lineNum, rawLine, 'Setup script cannot be empty');
       }
       break;
-    
+
+    case ':service':
+      if (!args.trim()) {
+        throw new ConfigParseError(sourcePath, lineNum, rawLine, 'Service name cannot be empty');
+      }
+      if (!/^[a-zA-Z0-9_\-\.]+$/.test(args.trim())) {
+        throw new ConfigParseError(sourcePath, lineNum, rawLine, 'Service name contains invalid characters');
+      }
+      break;
+
+    case '@env':
+      const globalEnvMatch = args.match(/^\s*(\S+)\s*=\s*(.+)\s*$/);
+      if (!globalEnvMatch) {
+        throw new ConfigParseError(sourcePath, lineNum, rawLine, 'Global environment variable must follow format "@env <KEY> = <VALUE>"');
+      }
+      if (!globalEnvMatch[1] || !globalEnvMatch[2]) {
+        throw new ConfigParseError(sourcePath, lineNum, rawLine, 'Global environment variable key and value cannot be empty');
+      }
+      break;
+
+    case ':env':
+      const envMatch = args.match(/^\s*(\S+)\s*=\s*(.+)\s*$/);
+      if (!envMatch) {
+        throw new ConfigParseError(sourcePath, lineNum, rawLine, 'Environment variable must follow format ":env <KEY> = <VALUE>"');
+      }
+      if (!envMatch[1] || !envMatch[2]) {
+        throw new ConfigParseError(sourcePath, lineNum, rawLine, 'Environment variable key and value cannot be empty');
+      }
+      break;
+
     default:
       if (directive.startsWith('@') || directive.startsWith(':') || directive.startsWith('!')) {
         throw new ConfigParseError(sourcePath, lineNum, rawLine, `Unknown directive: ${directive}`);
       }
   }
+}
+
+function parseGlobalEnvironmentVariables(raw: string): Array<{ key: string; value: string }> {
+  const lines = raw.split(/\r?\n/);
+  const globalEnvs: Array<{ key: string; value: string }> = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i] || '';
+    let line = rawLine.trim();
+
+    if (!line || line.startsWith("#")) continue;
+
+    if (line.startsWith("@env ")) {
+      const envArgs = line.slice(5).trim();
+      try {
+        const match = envArgs.match(/^(\S+)\s*=\s*(.+)$/);
+        if (match && match[1] && match[2]) {
+          globalEnvs.push({ key: match[1], value: match[2] });
+        }
+      } catch (error) {
+        // Ignore parsing errors for global env vars
+        console.warn(`Warning: Failed to parse global env var: ${envArgs}`);
+      }
+    }
+  }
+
+  return globalEnvs;
 }
 
 function loadGroup(groupName: string, visited: Set<string> = new Set()): OwlConfigEntry[] {
@@ -144,12 +206,13 @@ function loadGroup(groupName: string, visited: Set<string> = new Set()): OwlConf
   
   try {
     const groupRaw = require("node:fs").readFileSync(groupPath, "utf8");
-    return parseOwlConfig(groupRaw, visited, { 
-      sourcePath: groupPath, 
+    const { entries } = parseOwlConfig(groupRaw, visited, {
+      sourcePath: groupPath,
       sourceType: 'group',
       groupName: groupName,
-      strict: true 
+      strict: true
     });
+    return entries;
   } catch (error) {
     if (error instanceof ConfigParseError) {
       throw error;
@@ -163,14 +226,19 @@ function loadGroup(groupName: string, visited: Set<string> = new Set()): OwlConf
   }
 }
 
-function parseOwlConfig(raw: string, visited: Set<string> = new Set(), options: ParseOptions = {}): OwlConfigEntry[] {
+function parseOwlConfig(raw: string, visited: Set<string> = new Set(), options: ParseOptions = {}): { entries: OwlConfigEntry[], globalEnvs: Array<{ key: string; value: string }> } {
   const lines = raw.split(/\r?\n/);
   const entries: OwlConfigEntry[] = [];
   let current: Partial<OwlConfigEntry> = {};
   let configs: Array<{ source: string; destination: string }> = [];
   let setups: string[] = [];
+  let services: string[] = [];
+  let envs: Array<{ key: string; value: string }> = [];
   let packagesMode = false;
   let pendingPackages: string[] = [];
+
+  // Parse global environment variables
+  const globalEnvs = parseGlobalEnvironmentVariables(raw);
 
   const sourcePath = options.sourcePath || '<unknown>';
   const sourceType = options.sourceType;
@@ -178,11 +246,13 @@ function parseOwlConfig(raw: string, visited: Set<string> = new Set(), options: 
   const strict = options.strict ?? true;
   const allowInlineComments = options.allowInlineComments ?? true;
 
-  function createEntry(packageName: string, configs: Array<{ source: string; destination: string }>, setups: string[]): OwlConfigEntry {
+  function createEntry(packageName: string, configs: Array<{ source: string; destination: string }>, setups: string[], services: string[], envs: Array<{ key: string; value: string }>): OwlConfigEntry {
     return {
       package: packageName,
       configs,
       setups,
+      services,
+      envs,
       sourceFile: sourcePath,
       sourceType,
       groupName
@@ -222,6 +292,9 @@ function parseOwlConfig(raw: string, visited: Set<string> = new Set(), options: 
           errorAt(i + 1, rawLine, `Error loading group: ${error}`);
         }
       }
+    } else if (line.startsWith("@env ")) {
+      // Global environment variables are parsed separately
+      // No action needed here as they're collected by parseGlobalEnvironmentVariables
     } else if (line === "@packages") {
       packagesMode = true;
       pendingPackages = [];
@@ -238,14 +311,14 @@ function parseOwlConfig(raw: string, visited: Set<string> = new Set(), options: 
       if (packagesMode) {
         packagesMode = false;
         for (const pkg of pendingPackages) {
-          entries.push(createEntry(pkg, [], []));
+          entries.push(createEntry(pkg, [], [], [], []));
         }
         pendingPackages = [];
       }
 
       if (line.startsWith("@package ")) {
         if (current.package) {
-          entries.push(createEntry(current.package, configs, setups));
+          entries.push(createEntry(current.package, configs, setups, services, envs));
         }
         const pkgName = line.slice(9).trim();
         try {
@@ -253,6 +326,8 @@ function parseOwlConfig(raw: string, visited: Set<string> = new Set(), options: 
           current = { package: pkgName };
           configs = [];
           setups = [];
+          services = [];
+          envs = [];
         } catch (error) {
           if (error instanceof ConfigParseError) {
             errorAt(i + 1, rawLine, error.message.split(': ')[1] ?? error.message);
@@ -273,16 +348,39 @@ function parseOwlConfig(raw: string, visited: Set<string> = new Set(), options: 
             errorAt(i + 1, rawLine, error.message.split(': ')[1] ?? error.message);
           }
         }
-      } else if (line.startsWith("!setup ")) {
-        const setupScript = line.slice(7).trim();
+      } else if (line.startsWith(":service ")) {
+        const serviceName = line.slice(9).trim();
         try {
-          validateDirective('!setup', setupScript, i + 1, sourcePath, rawLine);
-          setups.push(setupScript);
+          validateDirective(':service', serviceName, i + 1, sourcePath, rawLine);
+          services.push(serviceName);
         } catch (error) {
           if (error instanceof ConfigParseError) {
             errorAt(i + 1, rawLine, error.message.split(': ')[1] ?? error.message);
           }
         }
+      } else if (line.startsWith(":env ")) {
+        const envArgs = line.slice(6).trim();
+        try {
+          validateDirective(':env', envArgs, i + 1, sourcePath, rawLine);
+          const match = envArgs.match(/^(\S+)\s*=\s*(.+)$/);
+          if (match && match[1] && match[2]) {
+            envs.push({ key: match[1], value: match[2] });
+          }
+        } catch (error) {
+          if (error instanceof ConfigParseError) {
+            errorAt(i + 1, rawLine, error.message.split(': ')[1] ?? error.message);
+          }
+        }
+      } else if (line.startsWith("!setup ")) {
+          const setupScript = line.slice(7).trim();
+          try {
+            validateDirective('!setup', setupScript, i + 1, sourcePath, rawLine);
+            setups.push(setupScript);
+          } catch (error) {
+            if (error instanceof ConfigParseError) {
+              errorAt(i + 1, rawLine, error.message.split(': ')[1] ?? error.message);
+            }
+          }
       } else {
         if (line.startsWith("@") || line.startsWith(":") || line.startsWith("!")) {
           const parts = line.split(/\s+/);
@@ -304,19 +402,22 @@ function parseOwlConfig(raw: string, visited: Set<string> = new Set(), options: 
     }
   }
 
-  if (packagesMode && pendingPackages.length > 0) {
-    for (const pkg of pendingPackages) {
-      entries.push(createEntry(pkg, [], []));
+    if (packagesMode && pendingPackages.length > 0) {
+      for (const pkg of pendingPackages) {
+        entries.push(createEntry(pkg, [], [], [], []));
+      }
     }
-  }
-  if (current.package) {
-    entries.push(createEntry(current.package, configs, setups));
-  }
+    if (current.package) {
+      entries.push(createEntry(current.package, configs, setups, services, envs));
+    }
 
-  return entries;
+  // Parse global environment variables
+  const parsedGlobalEnvs = parseGlobalEnvironmentVariables(raw);
+
+  return { entries, globalEnvs: parsedGlobalEnvs };
 }
 
-export async function loadConfigForHost(hostname: string): Promise<OwlConfigEntry[]> {
+export async function loadConfigForHost(hostname: string): Promise<{ entries: OwlConfigEntry[], globalEnvs: Array<{ key: string; value: string }> }> {
   const OWL_ROOT = resolve(homedir(), ".owl");
   const globalPath = resolve(OWL_ROOT, "main.owl");
   
@@ -326,23 +427,26 @@ export async function loadConfigForHost(hostname: string): Promise<OwlConfigEntr
     }
 
     const globalRaw = await readFile(globalPath, "utf8");
-    const globalEntries = parseOwlConfig(globalRaw, new Set(), { 
-      sourcePath: globalPath, 
+    const { entries: globalEntries, globalEnvs: globalGlobalEnvs } = parseOwlConfig(globalRaw, new Set(), {
+      sourcePath: globalPath,
       sourceType: 'main',
-      strict: true 
+      strict: true
     });
 
     const hostPath = resolve(OWL_ROOT, `hosts/${hostname}.owl`);
     let hostEntries: OwlConfigEntry[] = [];
-    
+    let hostGlobalEnvs: Array<{ key: string; value: string }> = [];
+
     if (existsSync(hostPath)) {
       try {
         const hostRaw = await readFile(hostPath, "utf8");
-        hostEntries = parseOwlConfig(hostRaw, new Set(), { 
-          sourcePath: hostPath, 
+        const { entries: hostConfigEntries, globalEnvs: parsedHostGlobalEnvs } = parseOwlConfig(hostRaw, new Set(), {
+          sourcePath: hostPath,
           sourceType: 'host',
-          strict: true 
+          strict: true
         });
+        hostEntries = hostConfigEntries;
+        hostGlobalEnvs = parsedHostGlobalEnvs;
       } catch (error) {
         if (error instanceof ConfigParseError) {
           throw error;
@@ -375,7 +479,30 @@ export async function loadConfigForHost(hostname: string): Promise<OwlConfigEntr
       }
     }
     
-    return Object.values(merged);
+    // Parse global environment variables from all config files
+    const allConfigContent = [globalRaw];
+    let hostRaw = '';
+    if (existsSync(hostPath)) {
+      hostRaw = await readFile(hostPath, "utf8");
+      allConfigContent.push(hostRaw);
+    }
+
+    const allGlobalEnvs: Array<{ key: string; value: string }> = [];
+    for (const content of allConfigContent) {
+      const globalEnvs = parseGlobalEnvironmentVariables(content);
+      allGlobalEnvs.push(...globalEnvs);
+    }
+
+    // Combine global environment variables from all sources
+    const combinedGlobalEnvs = [...globalGlobalEnvs];
+    if (hostGlobalEnvs) {
+      combinedGlobalEnvs.push(...hostGlobalEnvs);
+    }
+
+    return {
+      entries: Object.values(merged),
+      globalEnvs: combinedGlobalEnvs
+    };
   } catch (error) {
     if (error instanceof ConfigParseError) {
       throw error;

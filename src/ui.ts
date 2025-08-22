@@ -23,74 +23,12 @@ const styles = {
   success: pc.green,
   error: pc.red,
   warning: pc.yellow,
-  info: pc.cyan,
+  info: pc.gray,
   muted: pc.dim,
   accent: pc.white,
-  highlight: pc.magenta,
-  subtle: pc.gray,
-  bold: pc.bold,
-  italic: pc.italic,
-  underline: pc.underline,
 };
 
 export { styles };
-
-// Enhanced visual elements
-export const box = {
-  top: "┌",
-  bottom: "└",
-  vertical: "│",
-  horizontal: "─",
-  cross: "┼",
-  leftT: "├",
-  rightT: "┤",
-  topT: "┬",
-  bottomT: "┴",
-};
-
-export function createBox(content: string, options: { width?: number; padding?: number; style?: (s: string) => string } = {}): string {
-  const { width = 60, padding = 1, style = styles.accent } = options;
-  const lines = content.split('\n');
-  const innerWidth = width - 2 - (padding * 2);
-
-  const topBorder = box.top + box.horizontal.repeat(width - 2) + box.top;
-  const bottomBorder = box.bottom + box.horizontal.repeat(width - 2) + box.bottom;
-
-  const wrappedLines = lines.flatMap(line => {
-    if (line.length <= innerWidth) return [line];
-    const words = line.split(' ');
-    const wrapped = [];
-    let current = '';
-    for (const word of words) {
-      if (current.length + word.length + 1 <= innerWidth) {
-        current += (current ? ' ' : '') + word;
-      } else {
-        if (current) wrapped.push(current);
-        current = word;
-      }
-    }
-    if (current) wrapped.push(current);
-    return wrapped;
-  });
-
-  const paddedLines = wrappedLines.map(line =>
-    ' '.repeat(padding) + line.padEnd(innerWidth) + ' '.repeat(padding)
-  );
-
-  const contentLines = paddedLines.map(line => box.vertical + style(line) + box.vertical);
-
-  return [topBorder, ...contentLines, bottomBorder].join('\n');
-}
-
-export function createProgressBar(current: number, total: number, options: { width?: number; complete?: string; incomplete?: string } = {}): string {
-  const { width = 30, complete = '█', incomplete = '░' } = options;
-  const percentage = Math.min(100, Math.max(0, (current / total) * 100));
-  const filled = Math.round((percentage / 100) * width);
-  const empty = width - filled;
-
-  const bar = complete.repeat(filled) + incomplete.repeat(empty);
-  return `${bar} ${percentage.toFixed(0).padStart(3)}%`;
-}
 
 export function formatPackageSource(entry: {sourceType?: string, sourceFile?: string, groupName?: string}): string {
   if (!entry.sourceType) return "";
@@ -114,52 +52,25 @@ export const ui = {
   header: (mode?: string) => {
     console.log();
     if (mode) {
-      // Show enhanced colored badge for the current mode
+      // Show colored badge for the current mode
       const badge = mode === 'dry-run'
-        ? pc.bgYellow(pc.black(` 🧪 Dry run `))
-        : pc.bgGreen(pc.black(` ⚡ ${mode} `));
+        ? pc.bgYellow(pc.black(` Dry run `))
+        : pc.bgBlue(pc.white(` ${mode} `));
       console.log(` ${badge} `);
     }
     console.log();
   },
 
-  section: (title: string, options: { icon?: string; color?: (s: string) => string } = {}) => {
-    const { icon = "📦", color = styles.primary } = options;
-    console.log();
-    console.log(`${color(icon)} ${styles.bold(title)}`);
-    console.log(color("─".repeat(50)));
-  },
-
-  status: (label: string, status: 'success' | 'error' | 'warning' | 'info' | 'pending', details?: string) => {
-    const statusIcons = {
-      success: { icon: "✓", color: styles.success },
-      error: { icon: "✗", color: styles.error },
-      warning: { icon: "⚠", color: styles.warning },
-      info: { icon: "ℹ", color: styles.info },
-      pending: { icon: "⟳", color: styles.muted }
-    };
-
-    const { icon, color } = statusIcons[status];
-    const detailText = details ? ` ${styles.muted(`(${details})`)}` : '';
-    console.log(`${color(icon)} ${label}${detailText}`);
-  },
-
   overview: (stats: {host: string, packages: number}) => {
-    const overviewBox = createBox(
-      `${styles.bold("System Overview")}\n\n` +
-      `${styles.muted("Host:")} ${styles.accent(stats.host)}\n` +
-      `${styles.muted("Packages:")} ${styles.accent(stats.packages.toString())}\n` +
-      `${styles.muted("Mode:")} ${styles.highlight("Active")}`,
-      { width: 45, style: styles.info }
-    );
-    console.log(overviewBox);
+    console.log(`${pc.dim("host:")}     ${stats.host}`);
+    console.log(`${pc.dim("packages:")} ${stats.packages}`);
+    console.log();
+    console.log(pc.yellow(":::::::::::::::"));
     console.log();
   },
 
   installHeader: () => {
-    console.log();
-    console.log(styles.bold("🚀 Installation Progress"));
-    console.log(styles.primary("═".repeat(50)));
+    console.log(styles.primary("Installing:"));
   },
 
   info: (text: string) => console.log(`${icon.info} ${styles.info(text)}`),
@@ -180,25 +91,22 @@ export const ui = {
   packageInstallProgress: async (packageName: string, hasDotfiles: boolean = false, streamMode: boolean = false, packageEntry?: any) => {
     // Show package source (host/group) if available
     const sourcePrefix = packageEntry ? formatPackageSource(packageEntry) : "";
+    console.log(`${sourcePrefix}${pc.cyan(packageName)} ${styles.muted("->")}`);
 
     if (!streamMode) {
-      console.log(`${sourcePrefix}${styles.bold(packageName)}`);
-
-      // Enhanced package installation with progress
-      const packageSpinner = spinner("  Package installation", { enabled: true });
+      // Show package installation progress
+      process.stdout.write(`  Package - ${styles.muted("installing...")}`);
       await new Promise(resolve => setTimeout(resolve, PACKAGE_INSTALL_DELAY));
-      packageSpinner.stop("installed ✓");
+      process.stdout.write(`\r  Package - ${styles.success("installed")}     \n`);
 
       // Show dotfiles installation if needed
       if (hasDotfiles) {
-        const dotfilesSpinner = spinner("  Dotfiles setup", { enabled: true });
+        process.stdout.write(`  Dotfiles - ${styles.muted("installing...")}`);
         await new Promise(resolve => setTimeout(resolve, DOTFILES_INSTALL_DELAY));
-        dotfilesSpinner.stop("configured ✓");
+        process.stdout.write(`\r  Dotfiles - ${styles.success("installed")}     \n`);
       }
 
       console.log();
-    } else {
-      console.log(`${sourcePrefix}${styles.accent(packageName)} ${styles.muted("-> processing...")}`);
     }
   },
 
@@ -215,7 +123,7 @@ export const ui = {
     console.log(styles.success(text));
     console.log();
   },
-  
+
   error: (text: string) => {
     console.log();
     console.error(styles.error(text));
@@ -254,12 +162,12 @@ export function spinner(text: string, options: SpinnerOptions = {}) {
     };
   }
   
-  const frames = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+  const frames = ["⠋","⠙","⠸","⠴","⠦","⠇"];
   let frameIndex = 0;
   let stopped = false;
   let currentText = text;
   const startTime = Date.now();
-  
+
   const intervalId = setInterval(() => {
     if (stopped) return;
     const frame = frames[frameIndex = (frameIndex + 1) % frames.length] || "⠋";

@@ -1,6 +1,7 @@
 import { join, resolve, dirname } from "path";
 import { $ } from "bun";
 import { ui, spinner, icon } from "./ui";
+import pc from "picocolors";
 import { existsSync, lstatSync, mkdirSync } from "fs";
 import { loadOwlLock, saveOwlLock, getFileHash } from "./utils/lock";
 import { getHomeDirectory } from "./utils/fs";
@@ -182,7 +183,7 @@ export async function analyzeConfigsPerPackage(configEntries: Array<{package: st
     const { styles, formatPackageSource } = await import("./ui");
     
     const sourcePrefix = formatPackageSource(entry);
-    process.stdout.write(`${sourcePrefix}${packageName} ${styles.muted("->")}\n`);
+    process.stdout.write(`${sourcePrefix}${pc.cyan(packageName)} ${styles.muted("->")}\n`);
     
     if (hasConflicts) {
       // Show conflicts immediately
@@ -275,7 +276,7 @@ export async function manageConfigsPerPackage(configEntries: Array<{package: str
     // Import styles from ui
     const { styles } = await import("./ui");
     
-    process.stdout.write(`${packageName} ${styles.muted("->")}\n`);
+    process.stdout.write(`${pc.cyan(packageName)} ${styles.muted("->")}\n`);
     
     if (hasConflicts) {
       // Show conflicts immediately
