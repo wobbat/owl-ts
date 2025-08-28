@@ -65,3 +65,73 @@ export interface PackageEntry {
   sourceFile?: string;
   groupName?: string;
 }
+
+// AUR-related types
+export interface AURPackage {
+  ID: number;
+  Name: string;
+  PackageBaseID: number;
+  PackageBase: string;
+  Version: string;
+  Description: string;
+  URL: string;
+  NumVotes: number;
+  Popularity: number;
+  OutOfDate: number | null;
+  Maintainer: string;
+  FirstSubmitted: number;
+  LastModified: number;
+  URLPath: string;
+  Depends: string[];
+  MakeDepends: string[];
+  OptDepends: string[];
+  Conflicts: string[];
+  Provides: string[];
+  Replaces: string[];
+  Groups: string[];
+  License: string[];
+  Keywords: string[];
+}
+
+export interface AURResponse {
+  version: number;
+  type: string;
+  resultcount: number;
+  results: AURPackage[];
+}
+
+export interface SearchResult {
+  name: string;
+  version: string;
+  description: string;
+  repository: string;
+  installed: boolean;
+  inConfig: boolean;
+}
+
+export interface AURClientOptions {
+  bypassCache?: boolean;
+  cacheDir?: string;
+}
+
+export interface AURBudget {
+  resetAt: Date;
+  usedCalls: number;
+  maxCalls: number;
+  budgetFile: string;
+}
+
+export type ProgressCallback = (message: string) => void;
+
+// Add command specific types
+export interface AddCommandOptions extends CommandOptions {
+  exact?: string;
+  file?: string;
+  source?: "repo" | "aur" | "any";
+  yes?: boolean;
+  json?: boolean;
+  all?: boolean;
+}
+
+// Re-export SearchResult for backward compatibility
+export { SearchResult };

@@ -4,7 +4,7 @@
 
 import { ui } from "./ui";
 import { ensureOwlDirectories } from "./utils/fs";
-import { ensureYayInstalled } from "./packages";
+import { ensurePacmanAvailable } from "./packages";
 import { handleError } from "./utils/errors";
 import { timeOperation } from "./utils/performance";
 import {
@@ -13,13 +13,22 @@ import {
   isVersionCommand,
   isUpgradeCommand,
   isDryRunCommand,
-  isUninstallCommand
+  isUninstallCommand,
+  isAddCommand,
+  isConfigEditCommand,
+  isDotEditCommand,
+  isGendbCommand
 } from "./commands";
 import {
   handleUpgradeCommand,
   handleUninstallCommand,
   handleApplyCommand
 } from "./handlers/index";
+import { handleAddCommand } from "./handlers/add";
+import { handleConfigEditCommand } from "./handlers/configedit";
+import { handleDotEditCommand } from "./handlers/dotedit";
+import { handleGendbCommand } from "./handlers/gendb";
+
 import pkg from "../package.json";
 
 /**
@@ -40,20 +49,25 @@ function showHelp() {
   console.log("\x1b[1mUsage:\x1b[0m");
   console.log("  owl <command> [options]\n");
 
-  console.log("\x1b[1mCommands:\x1b[0m");
-  ui.list([
-    "apply          Install packages, copy configs, and run setup scripts",
-    "dry-run, dr    Preview what would be done without making changes",
-    "upgrade, up    Upgrade all packages to latest versions",
-    "uninstall      Remove all managed packages and configs",
-    "help, --help   Show this help message",
-    "version, -v    Show version information"
-  ], { indent: true, color: (s: string) => `\x1b[34m${s}\x1b[0m` });
+   console.log("\x1b[1mCommands:\x1b[0m");
+   ui.list([
+     "apply          Install packages, copy configs, and run setup scripts",
+     "add            Search for and add packages to configuration files",
+     "configedit, ce Edit configuration files with your preferred editor",
+     "dotedit, de    Edit dotfiles with your preferred editor",
+     "dry-run, dr    Preview what would be done without making changes",
+     "upgrade, up    Upgrade all packages to latest versions",
+     "uninstall      Remove all managed packages and configs",
+     "gendb          Generate VCS database for development packages",
+     "help, --help   Show this help message",
+     "version, -v    Show version information"
+   ], { indent: true, color: (s: string) => `\x1b[34m${s}\x1b[0m` });
 
   console.log("\x1b[1m\nOptions:\x1b[0m");
   ui.list([
     "--no-spinner   Disable loading animations",
-    "--verbose      Show full command output instead of progress spinners"
+    "--verbose      Show full command output instead of progress spinners",
+    "--devel        Check VCS packages (-git, -hg, etc.) for updates (with upgrade)"
   ], { indent: true, color: (s: string) => `\x1b[37m${s}\x1b[0m` });
 
   console.log("\x1b[1m\nExamples:\x1b[0m");
@@ -84,7 +98,7 @@ export async function main() {
   try {
     // Parse command line arguments (skip node path and script path)
     const [, , ...args] = process.argv;
-    const { command, options } = parseCommand(args);
+    const { command, options, args: remainingArgs } = parseCommand(args);
 
     // Handle informational commands immediately (no setup needed)
     if (isHelpCommand(command)) {
@@ -100,7 +114,7 @@ export async function main() {
     // Set up the Owl environment (create directories, ensure dependencies)
     await timeOperation("setup", async () => {
       ensureOwlDirectories();
-      await ensureYayInstalled();
+      await ensurePacmanAvailable();
     });
 
     // Route to the appropriate command handler based on user input
@@ -108,6 +122,20 @@ export async function main() {
       await timeOperation("upgrade", () => handleUpgradeCommand(options));
     } else if (isUninstallCommand(command)) {
       await timeOperation("uninstall", () => handleUninstallCommand(options));
+    } else if (isAddCommand(command)) {
+      // Extract search terms from remaining arguments (options are already parsed)
+      const searchTerms = remainingArgs.filter(arg => !arg.startsWith('--'));
+      await timeOperation("add", () => handleAddCommand(searchTerms, options));
+    } else if (isConfigEditCommand(command)) {
+      // Extract target from remaining arguments
+      const target = remainingArgs.find(arg => !arg.startsWith('--'));
+      await timeOperation("configedit", () => handleConfigEditCommand(target, options));
+    } else if (isDotEditCommand(command)) {
+      // Extract target from remaining arguments
+      const target = remainingArgs.find(arg => !arg.startsWith('--'));
+      await timeOperation("dotedit", () => handleDotEditCommand(target, options));
+    } else if (isGendbCommand(command)) {
+      await timeOperation("gendb", () => handleGendbCommand(options));
     } else {
       // Default command: apply configuration (supports both normal and dry-run modes)
       const dryRun = isDryRunCommand(command);
@@ -116,4 +144,9 @@ export async function main() {
   } catch (error) {
     handleError("Fatal error", error);
   }
+}
+
+// Run the main function when this file is executed directly
+if (import.meta.main) {
+  main();
 }

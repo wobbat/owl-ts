@@ -1,5 +1,6 @@
 import pc from "picocolors";
 import { SPINNER_FRAME_INTERVAL, PACKAGE_INSTALL_DELAY, DOTFILES_INSTALL_DELAY } from "./constants";
+import type { SpinnerOptions } from "./types";
 
 export const icon = {
   ok: pc.green("+"),
@@ -137,11 +138,6 @@ export const ui = {
   }
 };
 
-export interface SpinnerOptions {
-  enabled?: boolean;
-  color?: (s: string) => string;
-}
-
 export function spinner(text: string, options: SpinnerOptions = {}) {
   const enabled = options.enabled !== false;
   const color = options.color || styles.primary;
@@ -153,7 +149,7 @@ export function spinner(text: string, options: SpinnerOptions = {}) {
         console.log(`${icon.ok} ${styles.success(message)}`);
       },
       fail(reason?: string) { 
-        const message = reason ? `${text} ${styles.info(reason)}` : text;
+        const message = reason ? `${text} ${styles.error(reason)}` : text;
         console.error(`${icon.err} ${styles.error(message)}`);
       },
       update(_newText: string) {
@@ -194,21 +190,25 @@ export function spinner(text: string, options: SpinnerOptions = {}) {
       } else if (currentText.includes('Dotfiles - syncing')) {
         process.stdout.write(`\r  Dotfiles - ${styles.success('synced')} ${timing}${message}     \n`);
       } else {
-        process.stdout.write(`\r${icon.ok} ${styles.success(currentText)} ${timing}${message}\n`);
+        // Show timing information like Go version
+        const finalMessage = suffix ? ` ${suffix}` : "";
+        process.stdout.write(`\r${icon.ok} ${styles.success(currentText)} ${timing}${finalMessage}\n`);
       }
     },
     
     fail(reason?: string) {
       stopped = true;
       clearInterval(intervalId);
+      const duration = Date.now() - startTime;
+      const timing = styles.muted(`(${duration}ms)`);
       const message = reason ? ` ${styles.muted(reason)}` : "";
       // For package installs, show "Package - failed" format
       if (currentText.includes('Package - installing')) {
-        process.stdout.write(`\r  Package - ${styles.error('failed')}${message}\n`);
+        process.stdout.write(`\r  Package - ${styles.error('failed')} ${timing}${message}\n`);
       } else if (currentText.includes('Dotfiles - checking') || currentText.includes('Dotfiles - syncing')) {
-        process.stdout.write(`\r  Dotfiles - ${styles.error('failed')}${message}\n`);
+        process.stdout.write(`\r  Dotfiles - ${styles.error('failed')} ${timing}${message}\n`);
       } else {
-        process.stdout.write(`\r${icon.err} ${styles.error(currentText)}${message}\n`);
+        process.stdout.write(`\r${icon.err} ${styles.error(currentText)} ${timing}${message}\n`);
       }
     },
 

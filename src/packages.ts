@@ -2,109 +2,35 @@ import { $ } from "bun";
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { getHomeDirectory, ensureOwlDirectories } from "./utils/fs";
+import { PacmanManager } from "./pacman-manager";
+import type { PackageInfo, PackageAction, ManagedPackage, ManagedLock } from "./types";
+
+// Global pacman manager instance
+let pacmanManager: PacmanManager | null = null;
 
 /**
- * Ensure that yay (Yet Another Yogurt - an AUR helper) is installed
- * Yay is required for installing packages from the Arch User Repository
+ * Get or create the pacman manager instance
  */
-export async function ensureYayInstalled(): Promise<void> {
+function getPacmanManager(): PacmanManager {
+  if (!pacmanManager) {
+    pacmanManager = new PacmanManager();
+  }
+  return pacmanManager;
+}
+
+/**
+ * Ensure that pacman is available (no need for yay anymore)
+ */
+export async function ensurePacmanAvailable(): Promise<void> {
   try {
-    await $`which yay`.quiet();
+    await $`which pacman`.quiet();
     return;
   } catch {
-    console.log("yay not found. Installing yay...");
-    await installYay();
+    throw new Error("pacman is not available on this system. This tool requires pacman");
   }
 }
 
-/**
- * Install yay from the Arch User Repository
- * This involves downloading the source, building it, and installing it
- */
-async function installYay(): Promise<void> {
-  const tempDir = '/tmp/yay-install';
 
-  try {
-    // Import spinner here to avoid circular dependencies between modules
-    const { spinner } = await import("./ui");
-
-    // Step 1: Install prerequisites needed to build yay
-    const prereqSpinner = spinner("Installing yay prerequisites...", { enabled: true });
-    try {
-      await $`sudo pacman -S --needed --noconfirm git base-devel`.quiet();
-      prereqSpinner.stop("Prerequisites installed");
-    } catch (error: any) {
-      prereqSpinner.fail("Failed to install prerequisites");
-      throw error;
-    }
-
-    // Step 2: Download yay source code from AUR
-    const cloneSpinner = spinner("Downloading yay from AUR...", { enabled: true });
-    try {
-      await $`rm -rf ${tempDir}`.quiet().catch(() => {});
-      await $`git clone https://aur.archlinux.org/yay.git ${tempDir}`.quiet();
-      cloneSpinner.stop("Downloaded yay source");
-    } catch (error: any) {
-      cloneSpinner.fail("Failed to download yay");
-      throw error;
-    }
-
-    // Step 3: Build and install yay from source
-    const buildSpinner = spinner("Building and installing yay...", { enabled: true });
-    try {
-      const proc = Bun.spawn(['makepkg', '-si', '--noconfirm'], {
-        cwd: tempDir,
-        stdout: 'pipe',
-        stderr: 'pipe'
-      });
-
-      const exitCode = await proc.exited;
-      if (exitCode !== 0) {
-        buildSpinner.fail("Failed to build yay");
-        throw new Error(`makepkg failed with exit code ${exitCode}`);
-      }
-
-      buildSpinner.stop("yay installed successfully");
-    } catch (error: any) {
-      buildSpinner.fail("Failed to build yay");
-      throw error;
-    }
-
-    // Clean up temporary directory
-    await $`rm -rf ${tempDir}`.quiet().catch(() => {});
-
-  } catch (error) {
-    // Clean up temporary directory on error
-    await $`rm -rf ${tempDir}`.quiet().catch(() => {});
-    throw new Error(`Failed to install yay: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-export interface PackageInfo {
-  name: string;
-  installedVersion?: string;
-  availableVersion?: string;
-  status: 'not_installed' | 'up_to_date' | 'outdated';
-}
-
-export interface PackageAction {
-  name: string;
-  status: 'install' | 'skip' | 'remove';
-  version?: string;
-}
-
-interface ManagedPackage {
-  first_managed: string;
-  last_seen: string;
-  installed_version?: string;
-  auto_installed: boolean;
-}
-
-interface ManagedLock {
-  schema_version: string;
-  packages: Record<string, ManagedPackage>;
-  protected_packages: string[];
-}
 
 // Critical system packages that should NEVER be auto-removed
 const DEFAULT_PROTECTED_PACKAGES = [
@@ -150,9 +76,13 @@ function saveManagedLock(lock: ManagedLock): void {
 
 async function getInstalledVersion(packageName: string): Promise<string | undefined> {
   try {
-    const installed = await $`yay -Q ${packageName}`.text();
-    const match = installed.match(new RegExp(`${packageName}\\s+([\\S]+)`));
-    return match ? match[1] : undefined;
+    const manager = getPacmanManager();
+    if (await manager.isPackageInstalled(packageName)) {
+      const output = await $`pacman -Q ${packageName}`.text();
+      const match = output.match(new RegExp(`${packageName}\\s+([\\S]+)`));
+      return match ? match[1] : undefined;
+    }
+    return undefined;
   } catch {
     return undefined;
   }
@@ -160,8 +90,9 @@ async function getInstalledVersion(packageName: string): Promise<string | undefi
 
 async function getInstalled(): Promise<Set<string>> {
   try {
-    const output = await $`yay -Qq`.text();
-    return new Set(output.split("\n").filter(Boolean));
+    const manager = getPacmanManager();
+    const packages = await manager.getInstalledPackages();
+    return new Set(packages);
   } catch (error) {
     throw new Error(`Failed to get installed packages: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -169,28 +100,32 @@ async function getInstalled(): Promise<Set<string>> {
 
 async function getPackageInfo(packageName: string): Promise<PackageInfo> {
   try {
+    const manager = getPacmanManager();
+
     // Check if package is installed and get version
     let installedVersion: string | undefined;
-    try {
-      const installed = await $`yay -Q ${packageName}`.text();
-      const match = installed.match(new RegExp(`${packageName}\\s+([\\S]+)`));
-      if (match) {
-        installedVersion = match[1];
+    if (await manager.isPackageInstalled(packageName)) {
+      try {
+        const output = await $`pacman -Q ${packageName}`.text();
+        const match = output.match(new RegExp(`${packageName}\\s+([\\S]+)`));
+        if (match) {
+          installedVersion = match[1];
+        }
+      } catch {
+        // Package not installed
       }
-    } catch {
-      // Package not installed
     }
 
-    // Get available version
+    // Get available version by searching
     let availableVersion: string | undefined;
     try {
-      const available = await $`yay -Si ${packageName}`.text();
-      const versionMatch = available.match(/Version\s*:\s*([^\s\n]+)/);
-      if (versionMatch) {
-        availableVersion = versionMatch[1];
+      const searchResults = await manager.searchPackages(packageName);
+      const exactMatch = searchResults.find(r => r.name === packageName);
+      if (exactMatch) {
+        availableVersion = exactMatch.version;
       }
     } catch {
-      // Package not found in repos
+      // Package not found
     }
 
     let status: PackageInfo['status'] = 'not_installed';
@@ -330,34 +265,39 @@ export async function updateManagedPackages(packageNames: string[]): Promise<voi
 
 export async function removeUnmanagedPackages(packagesToRemove: string[], spinnerMode: boolean = true): Promise<void> {
   if (packagesToRemove.length === 0) return;
-  
+
   const managedLock = loadManagedLock();
-  
+  const manager = getPacmanManager();
+
   try {
     if (spinnerMode) {
       // Import spinner here to avoid circular dependencies
       const { spinner } = await import("./ui");
       const removeSpinner = spinner(`Removing ${packagesToRemove.length} packages...`, { enabled: true });
-      
+
       try {
-        await $`yay -Rns --noconfirm ${packagesToRemove}`.quiet();
+        for (const pkg of packagesToRemove) {
+          await manager.removePackage(pkg);
+        }
         removeSpinner.stop(`Removed ${packagesToRemove.length} packages successfully`);
       } catch (error: any) {
         removeSpinner.fail(`Failed to remove packages`);
         throw error;
       }
     } else {
-      await $`yay -Rns --noconfirm ${packagesToRemove}`.quiet();
+      for (const pkg of packagesToRemove) {
+        await manager.removePackage(pkg);
+      }
     }
-    
+
     // Remove from managed.lock
     for (const pkg of packagesToRemove) {
       delete managedLock.packages[pkg];
     }
-    
+
     saveManagedLock(managedLock);
   } catch (error: any) {
-    throw new Error(`Package removal failed: ${error?.stderr?.toString() || error?.message || "Unknown error"}`);
+    throw new Error(`Package removal failed: ${error?.message || "Unknown error"}`);
   }
 }
 
@@ -378,81 +318,51 @@ async function getPackagesToRemove(currentPackages: string[]): Promise<string[]>
 
 export async function installPackages(packages: string[], streamOutput: boolean = false, spinnerMode: boolean = true): Promise<void> {
   if (packages.length === 0) return;
-  
+
+  const manager = getPacmanManager();
+
   try {
     if (spinnerMode) {
       // Import spinner here to avoid circular dependencies
       const { spinner } = await import("./ui");
-      const installSpinner = spinner(`Package - installing...`, { enabled: true });
-      
+      const installSpinner = spinner(`Installing packages...`, { enabled: true });
+
       try {
-        await $`yay -S --needed --noconfirm ${packages}`.quiet();
-        installSpinner.stop(`installed successfully`);
+        await manager.installPackages(packages, false);
+        installSpinner.stop(`Packages installed successfully`);
       } catch (error: any) {
-        installSpinner.fail(`installation failed`);
+        installSpinner.fail(`Installation failed`);
         throw error;
       }
     } else if (streamOutput) {
       await installPackagesWithStreaming(packages);
     } else {
-      await $`yay -S --needed ${packages}`.quiet();
+      await manager.installPackages(packages, false);
     }
   } catch (error: any) {
-    throw new Error(`Package installation failed: ${error?.stderr?.toString() || error?.message || "Unknown error"}`);
+    throw new Error(`Package installation failed: ${error?.message || "Unknown error"}`);
   }
 }
 
 async function installPackagesWithStreaming(packages: string[]): Promise<void> {
-  const proc = Bun.spawn(['yay', '-S', '--needed', '--noconfirm', ...packages], {
-    stdout: 'pipe',
-    stderr: 'pipe',
-    stdin: 'inherit'
-  });
+  const manager = getPacmanManager();
 
-  let lastLine = '';
-  let currentDisplayLine = '';
-  const decoder = new TextDecoder();
-  
-  const reader = proc.stdout.getReader();
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      const text = decoder.decode(value, { stream: true });
-      const lines = text.split('\n');
-      
-      // Process each line
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i] || '';
-        
-        if (i === lines.length - 1 && !text.endsWith('\n')) {
-          // This is a partial line, save it for next iteration
-          lastLine = line;
-        } else {
-          // Complete line (including empty lines from line breaks)
-          const fullLine = lastLine + line;
-          lastLine = '';
-          
-          if (fullLine.trim()) {
-            // Only show the latest non-empty line, clearing the previous one
-            currentDisplayLine = fullLine.trim();
-            process.stdout.write('\r\x1b[K'); // Clear line
-            process.stdout.write(`  ${currentDisplayLine}`);
-          }
-        }
-      }
+  // For streaming, we'll install packages one by one to show progress
+  for (const pkg of packages) {
+    process.stdout.write(`Installing ${pkg}... `);
+
+    try {
+      await manager.installPackageWithProgress(pkg, false, (message) => {
+        process.stdout.write('\r\x1b[K'); // Clear line
+        process.stdout.write(`  ${message}`);
+      });
+      process.stdout.write('\r\x1b[K'); // Clear line
+      console.log(`✓ ${pkg} installed successfully`);
+    } catch (error) {
+      process.stdout.write('\r\x1b[K'); // Clear line
+      console.log(`✗ ${pkg} failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
     }
-  } finally {
-    reader.releaseLock();
   }
-  
-  const exitCode = await proc.exited;
-  if (exitCode !== 0) {
-    throw new Error(`Package installation failed with exit code ${exitCode}`);
-  }
-  
-  // Clear the streaming line and move to next line
-  process.stdout.write('\r\x1b[K\n');
 }
 

@@ -6,6 +6,7 @@ import { ui, spinner, icon } from "../ui";
 import pc from "picocolors";
 import { $ } from "bun";
 import { safeExecuteWithFallback, safeExecute } from "../utils/errors";
+import { compact } from "../utils/fs";
 import type { CommandOptions } from "../commands";
 import { hostname } from "os";
 
@@ -13,17 +14,18 @@ import { hostname } from "os";
  * Handle the upgrade command
  */
 export async function handleUpgradeCommand(options: CommandOptions): Promise<void> {
+  const { PacmanManager } = await import("../pacman-manager");
+  const pacmanManager = new PacmanManager();
+
   ui.header("Upgrade");
 
   const analysisSpinner = spinner("Analyzing system packages...", { enabled: !options.noSpinner });
 
-  const result = await safeExecuteWithFallback(
-    () => $`yay -Qu`.text().catch(() => ""),
-    "",
+  // Get outdated packages using the new manager
+  const outdatedPackages = await safeExecute(
+    () => pacmanManager.getOutdatedPackages(),
     "Failed to analyze packages"
   );
-
-  const outdatedPackages = compact(result.split('\n').map((line: string) => line.split(' ')[0]));
 
   analysisSpinner.stop(`Found ${outdatedPackages.length} packages to upgrade`);
 
@@ -47,19 +49,12 @@ export async function handleUpgradeCommand(options: CommandOptions): Promise<voi
 
   await safeExecute(async () => {
     if (options.verbose) {
-      await $`yay -Syu --noconfirm`;
+      await pacmanManager.upgradeSystem(true);
     } else {
-      await $`yay -Syu --noconfirm`.quiet();
+      await pacmanManager.upgradeSystem(false);
     }
   }, "System upgrade failed");
 
   upgradeSpinner.stop("System upgrade completed successfully");
   ui.celebration("All packages upgraded!");
-}
-
-/**
- * Compact filters out null/undefined/empty-string/false values from an array
- */
-function compact<T>(array: Array<T | null | undefined | false | "" | 0>): T[] {
-  return array.filter((v): v is T => Boolean(v) && v !== "") as T[];
 }

@@ -110,7 +110,7 @@ function validateDirective(directive: string, args: string, lineNum: number, sou
       }
       break;
     
-    case '!setup':
+    case ':setup':
       if (!args.trim()) {
         throw new ConfigParseError(sourcePath, lineNum, rawLine, 'Setup script cannot be empty');
       }
@@ -371,10 +371,10 @@ function parseOwlConfig(raw: string, visited: Set<string> = new Set(), options: 
             errorAt(i + 1, rawLine, error.message.split(': ')[1] ?? error.message);
           }
         }
-      } else if (line.startsWith("!setup ")) {
-          const setupScript = line.slice(7).trim();
+      } else if (line.startsWith(":setup ")) {
+          const setupScript = line.slice(6).trim();
           try {
-            validateDirective('!setup', setupScript, i + 1, sourcePath, rawLine);
+            validateDirective(':setup', setupScript, i + 1, sourcePath, rawLine);
             setups.push(setupScript);
           } catch (error) {
             if (error instanceof ConfigParseError) {
@@ -396,7 +396,7 @@ function parseOwlConfig(raw: string, visited: Set<string> = new Set(), options: 
             }
           }
         } else {
-          errorAt(i + 1, rawLine, `Unrecognized line: "${line}". Expected a directive (@package, @group, :config, !setup) or package name in @packages block`);
+          errorAt(i + 1, rawLine, `Unrecognized line: "${line}". Expected a directive (@package, @group, :config, :setup) or package name in @packages block`);
         }
       }
     }
