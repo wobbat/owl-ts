@@ -2,7 +2,7 @@
  * Shared search utilities for both add and search commands
  */
 
-import { PacmanManager } from "../pacman-manager";
+import { PacmanManager } from "../modules/pacman/manager";
 import type { SearchResult } from "../types";
 
 /**

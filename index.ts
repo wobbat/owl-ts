@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { main } from "./src/main";
+import { main } from "./src/cli/main";
 
 main().catch(async (error) => {
   const { ui } = await import("./src/ui");

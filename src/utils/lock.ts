@@ -1,5 +1,6 @@
 import { join } from "path";
 import { ensureOwlDirectories, OWL_STATE_DIR } from "./fs";
+import { atomicWriteFile, withFileLock } from "./atomic";
 
 // Using standard Web Crypto API
 
@@ -62,6 +63,8 @@ export async function loadOwlLock(): Promise<OwlLock> {
 export async function saveOwlLock(lock: OwlLock): Promise<void> {
   ensureOwlDirectories();
   const lockPath = join(OWL_STATE_DIR, 'owl.lock');
-  const { writeFileSync } = await import('fs');
-  writeFileSync(lockPath, JSON.stringify(lock, null, 2), 'utf8');
+  const data = JSON.stringify(lock, null, 2);
+  await withFileLock(OWL_STATE_DIR, 'owl', async () => {
+    atomicWriteFile(lockPath, data);
+  });
 }
