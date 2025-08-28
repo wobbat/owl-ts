@@ -11,6 +11,7 @@ import { PacmanManager } from "../pacman-manager";
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { getHomeDirectory } from "../utils/fs";
+import { performOptimizedSearch, filterResultsByTerm } from "../utils/search";
 import type { CommandOptions } from "../commands";
 import type { SearchResult, ConfigEntry } from "../types";
 
@@ -39,9 +40,9 @@ export async function handleAddCommand(
 
   ui.header("Search Packages");
 
-  // Perform narrowing search (yay-style)
+  // Perform optimized narrowing search (yay-style)
   const searchResults = await safeExecute(
-    () => performNarrowingSearch(packageManager, queryTerms, options.source || "any"),
+    () => performOptimizedSearch(packageManager, queryTerms, options.source || "any"),
     "Failed to search packages"
   );
 
@@ -75,47 +76,7 @@ export async function handleAddCommand(
   }
 }
 
-/**
- * Perform narrowing search (yay-style): search with first term, then filter by subsequent terms
- */
-async function performNarrowingSearch(
-  manager: PacmanManager,
-  terms: string[],
-  source: "repo" | "aur" | "any"
-): Promise<SearchResult[]> {
-  if (terms.length === 0) return [];
 
-  // Search with the first term to get initial results
-  let results = await manager.searchPackages(terms[0] || "");
-
-  // Filter by source if specified
-  if (source === "repo") {
-    results = results.filter(r => r.repository !== "aur");
-  } else if (source === "aur") {
-    results = results.filter(r => r.repository === "aur");
-  }
-
-  // Apply narrowing with subsequent terms
-  for (const term of terms.slice(1)) {
-    results = filterResultsByTerm(results, term);
-  }
-
-  return results;
-}
-
-/**
- * Filter search results by checking if they contain the term (case-insensitive)
- */
-function filterResultsByTerm(results: SearchResult[], term: string): SearchResult[] {
-  if (!term) return results;
-
-  const lowerTerm = term.toLowerCase();
-  return results.filter(result => 
-    result.name.toLowerCase().includes(lowerTerm) ||
-    result.description?.toLowerCase().includes(lowerTerm) ||
-    result.repository.toLowerCase().includes(lowerTerm)
-  );
-}
 
 /**
  * Handle case when no packages are found
@@ -175,16 +136,45 @@ function handleMultipleResults(queryTerms: string[], options: CommandOptions): v
 async function selectPackageInteractively(results: SearchResult[]): Promise<SearchResult | null> {
   console.log(`\n${pc.bold("Found")} ${results.length} package(s):\n`);
 
-  results.forEach((pkg, index) => {
-    const status = pkg.installed ? pc.green("✓ installed") : pc.gray("○ not installed");
-    const repo = pkg.repository === "aur" ? pc.yellow("aur") : pc.blue(pkg.repository);
-    const version = pc.cyan(pkg.version);
+  // Color functions - toned down for better readability (matching Go version)
+  const bracketFunc = pc.green;
+  const aurFunc = pc.blue;
+  const repoFunc = pc.yellow;
+  const nameFunc = pc.white;
+  const versionFunc = pc.green;
+  const descFunc = pc.white;
 
-    console.log(`${index + 1}. ${pc.bold(pkg.name)} ${version} [${repo}] ${status}`);
-    if (pkg.description) {
-      console.log(`   ${pc.gray(pkg.description)}`);
+  // Display packages in reverse order so most relevant appear at bottom
+  for (let i = results.length - 1; i >= 0; i--) {
+    const pkg = results[i];
+    if (!pkg) continue;
+
+    // Format number with green brackets
+    const numberPart = `${bracketFunc("[")}${i + 1}${bracketFunc("]")}`;
+
+    // Format package name in clean white
+    const namePart = nameFunc(pkg.name);
+
+    // Format version in green
+    const versionPart = versionFunc(pkg.version);
+
+    // Format source tag
+    let sourceTag: string;
+    if (pkg.repository === "aur") {
+      sourceTag = `[${aurFunc("aur")}]`;
+    } else {
+      sourceTag = `[${repoFunc(pkg.repository)}]`;
     }
-  });
+
+    // Format installation status - only show if installed
+    const statusPart = pkg.installed ? ` ${pc.green("installed")}` : "";
+
+    let line = `${numberPart} ${namePart} ${versionPart} ${sourceTag}${statusPart}`;
+    if (pkg.description) {
+      line += ` - ${descFunc(pkg.description)}`;
+    }
+    console.log(line);
+  }
 
   console.log();
 
@@ -197,7 +187,7 @@ async function selectPackageInteractively(results: SearchResult[]): Promise<Sear
 }
 
 /**
- * Prompt user for package selection (simplified version)
+ * Prompt user for package selection (matching Go version style)
  */
 async function promptSelection(max: number): Promise<number> {
   const { createInterface } = await import("readline");
@@ -208,9 +198,9 @@ async function promptSelection(max: number): Promise<number> {
   });
 
   return new Promise((resolve) => {
-    rl.question(`Select package (1-${max}) or 0 to cancel: `, (answer) => {
+    rl.question(`${pc.green("[Enter number:]")} `, (answer) => {
       rl.close();
-      const num = parseInt(answer, 10);
+      const num = parseInt(answer.trim(), 10);
       resolve(isNaN(num) ? 0 : num);
     });
   });
@@ -387,15 +377,40 @@ async function selectConfigFile(
      return owlFiles[0] || null;
    }
 
-   // Interactive selection for multiple config files
-   console.log(`\n${pc.bold("Select configuration file:")}\n`);
-   
-   owlFiles.forEach((file, index) => {
-     const packageCount = configEntries.filter(entry => entry.sourceFile === file).length;
-     const relativeFile = file.replace(/^~\//, '');
-     console.log(`${index + 1}. ${pc.cyan(relativeFile)} (${packageCount} packages)`);
-   });
-   console.log();
+    // Interactive selection for multiple config files
+    console.log(`\n${pc.bold("Select a configuration file:")}\n`);
+
+    // Color functions - matching Go version
+    const bracketFunc = pc.green;
+    const fileFunc = pc.cyan;
+    const pathFunc = pc.white;
+    const countFunc = pc.blue;
+
+    // Display files in reverse order so most relevant appear at bottom
+    for (let i = owlFiles.length - 1; i >= 0; i--) {
+      const file = owlFiles[i];
+      if (!file) continue;
+
+      const packageCount = configEntries.filter(entry => entry.sourceFile === file).length;
+
+      // Convert to friendly path
+      const friendlyPath = file.replace(/^~\//, '');
+
+      // Format number with green brackets
+      const numberPart = `${bracketFunc("[")}${i + 1}${bracketFunc("]")}`;
+
+      // Format file name in soft cyan
+      const fileName = fileFunc(friendlyPath.split('/').pop() || friendlyPath);
+
+      // Format path in regular white
+      const pathPart = `(${pathFunc(friendlyPath)})`;
+
+      // Format package count in soft blue
+      const countPart = `[${countFunc(`${packageCount} packages`)}]`;
+
+      console.log(`${numberPart} ${fileName} ${pathPart} ${countPart}`);
+    }
+    console.log();
 
    const selection = await promptSelection(owlFiles.length);
    if (selection > 0 && selection <= owlFiles.length) {

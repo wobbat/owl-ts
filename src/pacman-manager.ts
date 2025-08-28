@@ -282,7 +282,7 @@ export class PacmanManager {
 
     // Search AUR for comprehensive results
     try {
-      const aurResults = await this.aurFallback.searchPackages(searchTerm);
+      const aurResults = await this.aurFallback.searchPackagesOptimized(searchTerm);
 
       // Filter out duplicates (packages that exist in both repo and AUR)
       const existingNames = new Set(results.map(r => r.name));
@@ -296,7 +296,172 @@ export class PacmanManager {
       // Ignore AUR search errors
     }
 
-    return results;
+    // Sort results to match yay's ordering
+    return this.sortSearchResults(results, searchTerm);
+  }
+
+  /**
+   * Sort search results to match yay's ordering algorithm
+   */
+  private sortSearchResults(results: SearchResult[], searchTerm: string): SearchResult[] {
+    const queryTerms = searchTerm.toLowerCase().split(/\s+/);
+
+    return results.sort((a, b) => {
+      // Helper function to calculate relevance score
+      const getRelevanceScore = (pkg: SearchResult): number => {
+        const name = pkg.name.toLowerCase();
+        const desc = pkg.description?.toLowerCase() || "";
+
+        let score = 0;
+
+        // For compound searches (multiple terms)
+        if (queryTerms.length > 1) {
+          // Count how many search terms are matched
+          let matches = 0;
+          for (const term of queryTerms) {
+            if (name.includes(term) || desc.includes(term)) {
+              matches++;
+            }
+          }
+
+          // Base score on percentage of terms matched
+          const matchRatio = matches / queryTerms.length;
+          if (matchRatio === 1.0) score += 120; // All terms matched
+          else if (matchRatio >= 0.5) score += 80; // At least half matched
+          else if (matches > 0) score += 40; // Some terms matched
+
+          // Bonus for exact compound matches (like "neovim-git" for "neovim git")
+          const compoundName = queryTerms.join('-');
+          if (name.includes(compoundName)) score += 50;
+
+          const compoundNameUnderscore = queryTerms.join('_');
+          if (name.includes(compoundNameUnderscore)) score += 50;
+        } else {
+          // Single term search
+          const query = queryTerms[0];
+          if (!query) return 0;
+
+          // Exact match gets highest score
+          if (name === query) return 100;
+
+          // Starts with query gets high score
+          if (name.startsWith(query)) return 90;
+
+          // Contains query as substring gets medium score
+          if (name.includes(query)) return 50;
+
+          // Fuzzy matching - contains all characters in order
+          let queryIndex = 0;
+          for (const char of name) {
+            if (char === query[queryIndex]) {
+              queryIndex++;
+              if (queryIndex === query.length) return 30;
+            }
+          }
+        }
+
+        return score;
+      };
+
+      const aScore = getRelevanceScore(a);
+      const bScore = getRelevanceScore(b);
+
+      // Higher relevance score comes first
+      if (aScore !== bScore) {
+        return bScore - aScore;
+      }
+
+      // Within same relevance level:
+
+      // 1. Official repositories come before AUR
+      const aOfficial = a.repository !== "aur";
+      const bOfficial = b.repository !== "aur";
+      if (aOfficial !== bOfficial) {
+        return aOfficial ? -1 : 1;
+      }
+
+      // 2. Installed packages come before uninstalled
+      if (a.installed !== b.installed) {
+        return a.installed ? -1 : 1;
+      }
+
+      // 3. For AUR packages, sort by votes/popularity (if available)
+      if (a.repository === "aur" && b.repository === "aur") {
+        const aVotes = (a as any).votes || 0;
+        const bVotes = (b as any).votes || 0;
+        if (aVotes !== bVotes) {
+          return bVotes - aVotes; // Higher votes first
+        }
+      }
+
+      // 4. Finally, sort alphabetically
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  /**
+   * Optimized search for packages using pacman first, then AUR with batched installation checks
+   */
+  async searchPackagesOptimized(searchTerm: string, installedPackages?: Set<string>): Promise<SearchResult[]> {
+    const results: SearchResult[] = [];
+
+    // Search official repositories with pacman
+    try {
+      const pacmanOutput = await $`pacman -Ss ${searchTerm}`.text();
+      const pacmanResults = this.parsePacmanSearchOutput(pacmanOutput);
+
+      // Update installation status using batched data if available
+      if (installedPackages) {
+        pacmanResults.forEach(result => {
+          result.installed = installedPackages.has(result.name);
+        });
+      }
+
+      results.push(...pacmanResults);
+    } catch {
+      // Ignore pacman search errors
+    }
+
+    // Also check if the search term is a package group
+    try {
+      const groupOutput = await $`pacman -Sg ${searchTerm}`.text();
+      if (groupOutput.trim()) {
+        // If it's a package group, add it as a result
+        const isInstalled = installedPackages
+          ? installedPackages.has(searchTerm)
+          : await this.isPackageInstalled(searchTerm);
+
+        results.unshift({
+          name: searchTerm,
+          version: "group",
+          description: `Package group containing multiple packages`,
+          repository: "core",
+          installed: isInstalled,
+          inConfig: false
+        });
+      }
+    } catch {
+      // Ignore group search errors
+    }
+
+    // Search AUR for comprehensive results
+    try {
+      const aurResults = await this.aurFallback.searchPackagesOptimized(searchTerm, installedPackages);
+
+      // Filter out duplicates (packages that exist in both repo and AUR)
+      const existingNames = new Set(results.map(r => r.name));
+
+      for (const aurResult of aurResults) {
+        if (!existingNames.has(aurResult.name)) {
+          results.push(aurResult);
+        }
+      }
+     } catch {
+       // Ignore AUR search errors
+     }
+
+     // Sort results to match yay's ordering
+     return this.sortSearchResults(results, searchTerm);
   }
 
   /**

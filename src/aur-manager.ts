@@ -211,7 +211,7 @@ export class AURManager {
   }
 
   /**
-   * Search for packages in AUR
+   * Search for packages in the AUR
    */
   async searchPackages(searchTerm: string): Promise<SearchResult[]> {
     try {
@@ -225,6 +225,35 @@ export class AURManager {
           description: pkg.Description,
           repository: "aur",
           installed: await this.isPackageInstalled(pkg.Name),
+          inConfig: false // Not tracked by owl config in this context
+        });
+      }
+
+      return results;
+    } catch (error) {
+      throw new Error(`AUR search failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Optimized search for packages in the AUR with batched installation checks
+   */
+  async searchPackagesOptimized(searchTerm: string, installedPackages?: Set<string>): Promise<SearchResult[]> {
+    try {
+      const aurResp = await this.aurClient.searchPackages(searchTerm);
+
+      const results: SearchResult[] = [];
+      for (const pkg of aurResp.results) {
+        const isInstalled = installedPackages
+          ? installedPackages.has(pkg.Name)
+          : await this.isPackageInstalled(pkg.Name);
+
+        results.push({
+          name: pkg.Name,
+          version: pkg.Version,
+          description: pkg.Description,
+          repository: "aur",
+          installed: isInstalled,
           inConfig: false // Not tracked by owl config in this context
         });
       }

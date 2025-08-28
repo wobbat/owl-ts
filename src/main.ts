@@ -16,6 +16,7 @@ import {
   isDotsCommand,
   isUninstallCommand,
   isAddCommand,
+  isSearchCommand,
   isConfigEditCommand,
   isDotEditCommand,
   isGendbCommand
@@ -27,6 +28,7 @@ import {
   handleDotsCommand
 } from "./handlers/index";
 import { handleAddCommand } from "./handlers/add";
+import { handleSearchCommand } from "./handlers/search";
 import { handleConfigEditCommand } from "./handlers/configedit";
 import { handleDotEditCommand } from "./handlers/dotedit";
 import { handleGendbCommand } from "./handlers/gendb";
@@ -56,6 +58,7 @@ function showHelp() {
       "apply          Install packages, copy configs, and run setup scripts",
       "dots           Check and sync only dotfiles configurations",
       "add            Search for and add packages to configuration files",
+      "search, s      Search for packages in repositories and AUR",
       "configedit, ce Edit configuration files with your preferred editor",
       "dotedit, de    Edit dotfiles with your preferred editor",
       "dry-run, dr    Preview what would be done without making changes",
@@ -73,15 +76,18 @@ function showHelp() {
     "--devel        Check VCS packages (-git, -hg, etc.) for updates (with upgrade)"
   ], { indent: true, color: (s: string) => `\x1b[37m${s}\x1b[0m` });
 
-  console.log("\x1b[1m\nExamples:\x1b[0m");
-  ui.list([
-    "owl                      # Apply all configurations (default)",
-    "owl apply                # Apply all configurations",
-    "owl dry-run              # Preview changes",
-    "owl upgrade              # Upgrade all packages",
-    "owl apply --no-spinner   # Apply without animations",
-    "owl upgrade --verbose    # Upgrade with full command output"
-  ], { indent: true, color: (s: string) => `\x1b[32m${s}\x1b[0m` });
+   console.log("\x1b[1m\nExamples:\x1b[0m");
+   ui.list([
+     "owl                      # Apply all configurations (default)",
+     "owl apply                # Apply all configurations",
+     "owl dry-run              # Preview changes",
+     "owl upgrade              # Upgrade all packages",
+     "owl search neovim        # Search for packages",
+     "owl search linux header  # Narrowing search (yay-style)",
+     "owl search --aur neovim  # Search AUR only",
+     "owl apply --no-spinner   # Apply without animations",
+     "owl upgrade --verbose    # Upgrade with full command output"
+   ], { indent: true, color: (s: string) => `\x1b[32m${s}\x1b[0m` });
 
   console.log("\x1b[1m\nConfiguration:\x1b[0m");
   console.log("  Place configuration files in ~/.owl/");
@@ -133,6 +139,10 @@ export async function main() {
       // Extract search terms from remaining arguments (options are already parsed)
       const searchTerms = remainingArgs.filter(arg => !arg.startsWith('--'));
       await timeOperation("add", () => handleAddCommand(searchTerms, options));
+    } else if (isSearchCommand(command)) {
+      // Extract search terms from remaining arguments
+      const searchTerms = remainingArgs.filter(arg => !arg.startsWith('--'));
+      await timeOperation("search", () => handleSearchCommand(searchTerms, options));
     } else if (isConfigEditCommand(command)) {
       // Extract target from remaining arguments
       const target = remainingArgs.find(arg => !arg.startsWith('--'));
