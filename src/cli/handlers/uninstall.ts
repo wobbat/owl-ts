@@ -2,9 +2,9 @@
  * Uninstall command handler for Owl package manager
  */
 
-import { ui, icon } from "../ui";
+import { ui, icon } from "../../ui";
 import pc from "picocolors";
-import { safeExecute } from "../utils/errors";
+import { safeExecute } from "../../utils/errors";
 import type { CommandOptions } from "../commands";
 
 /**
@@ -13,7 +13,7 @@ import type { CommandOptions } from "../commands";
 export async function handleUninstallCommand(options: CommandOptions): Promise<void> {
   ui.header("Uninstall");
 
-  const { getManagedPackages, removeUnmanagedPackages } = await import("../packages");
+  const { getManagedPackages, removeUnmanagedPackages } = await import("../../modules/packages");
   const managedPackages = await getManagedPackages();
 
   if (managedPackages.length === 0) {

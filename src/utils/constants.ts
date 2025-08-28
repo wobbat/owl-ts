@@ -27,7 +27,6 @@ export const EXIT_SUCCESS = 0;
 export const EXIT_FAILURE = 1;
 
 // Package manager commands
-export const YAY = 'yay';
 export const PACMAN = 'pacman';
 
 // Default protected packages that should never be auto-removed
@@ -53,7 +52,6 @@ export const ERROR_MESSAGES = {
   CONFIG_NOT_FOUND: 'Configuration file not found',
   PACKAGE_INSTALL_FAILED: 'Package installation failed',
   PACKAGE_REMOVAL_FAILED: 'Package removal failed',
-  YAY_NOT_FOUND: 'yay not found. Installing yay...',
   INVALID_CONFIG: 'Invalid configuration',
   CIRCULAR_DEPENDENCY: 'Circular dependency detected'
 } as const;

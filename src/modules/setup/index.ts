@@ -1,9 +1,10 @@
 import { resolve, extname } from "path";
 import { $ } from "bun";
-import { ui, spinner, icon } from "./ui";
+import { ui, spinner, icon } from "../../ui";
 import { existsSync } from "fs";
-import { loadOwlLock, saveOwlLock, getFileHash } from "./utils/lock";
-import { getHomeDirectory } from "./utils/fs";
+import { loadOwlLock, saveOwlLock, getFileHash } from "../../utils/lock";
+import { getHomeDirectory } from "../../utils/fs";
+import { runQuiet } from "../../utils/proc";
 
 interface SetupAction {
   script: string;
@@ -125,7 +126,7 @@ export async function runSetupScripts(scripts: string[]) {
       setupSpinner.update(`Executing ${action.script}...`);
       
       const { command, args } = getScriptExecutor(action.scriptPath);
-      await $`${command} ${args}`.quiet();
+      await runQuiet(command, args, { timeoutMs: 120000 });
       
       // Update the lock with the new hash
       const newHash = await getFileHash(action.scriptPath);

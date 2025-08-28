@@ -9,6 +9,9 @@ build/
 node_modules/
 bun.lockb
 
+# Optional local modules folder at repo root
+/modules/
+
 # === Development & IDE ===
 # TypeScript build cache
 *.tsbuildinfo
@@ -81,6 +84,11 @@ tmp/
 temp/
 *.tmp
 *.temp
+.DS_Store
+
+# Direnv / local env helpers
+.envrc
+.direnv/
 
 # === Runtime & System ===
 .pid
@@ -99,3 +107,6 @@ dev-scripts/
 
 
 owl
+
+#build stuff
+dist

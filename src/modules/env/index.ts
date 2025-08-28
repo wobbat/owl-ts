@@ -3,7 +3,7 @@
  */
 
 import { existsSync, writeFileSync, mkdirSync } from "fs";
-import { safeExecute } from "./utils/errors";
+import { safeExecute } from "../../utils/errors";
 import { homedir } from "os";
 import { resolve } from "path";
 
@@ -41,7 +41,7 @@ function writeEnvironmentFileBash(envMap: Map<string, string>, debug: boolean = 
     console.log(`  --- End of content ---`);
   }
 
-  writeFileSync(ENV_FILE_SH, content, "utf8");
+  atomicWriteFile(ENV_FILE_SH, content);
 }
 
 /**
@@ -67,7 +67,7 @@ function writeEnvironmentFileFish(envMap: Map<string, string>, debug: boolean = 
     console.log(`  --- End of content ---`);
   }
 
-  writeFileSync(ENV_FILE_FISH, content, "utf8");
+  atomicWriteFile(ENV_FILE_FISH, content);
 }
 
 /**
@@ -87,7 +87,7 @@ export async function setEnvironmentVariables(envs: EnvironmentVariable[], debug
 
   // Write clean file (even if empty)
   await safeExecute(
-    async () => writeEnvironmentFileBash(envMap, debug),
+    async () => withFileLock(resolve(homedir(), ".owl"), 'env', async () => writeEnvironmentFileBash(envMap, debug)),
     `Failed to write environment variables to ${ENV_FILE_SH}`
   );
 }
@@ -174,13 +174,13 @@ export async function manageGlobalEnvironmentVariables(globalEnvs: EnvironmentVa
 
   // Write clean files (both bash and fish, even if empty)
   await safeExecute(
-    async () => {
+    async () => withFileLock(resolve(homedir(), ".owl"), 'env', async () => {
       writeEnvironmentFileBash(envMap, debug);
       writeEnvironmentFileFish(envMap, debug);
       if (debug) {
         console.log(`  Successfully wrote environment files`);
       }
-    },
+    }),
     `Failed to write global environment variables`
   );
 
@@ -191,3 +191,4 @@ export async function manageGlobalEnvironmentVariables(globalEnvs: EnvironmentVa
   };
   saveGlobalEnvState(newState);
 }
+import { atomicWriteFile, withFileLock } from "../../utils/atomic";

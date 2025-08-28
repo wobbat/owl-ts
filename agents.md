@@ -1,143 +1,175 @@
-# agents.md
+# Owl Agents Guide
 
-This repository implements "Owl" — a lightweight, host-aware package and dotfile manager for Arch Linux written in TypeScript (targeting Bun). The document below summarizes the codebase, agent-like responsibilities, data flows, configuration, how to run, extension points, and troubleshooting.
+This guide explains Owl’s internal agents, how they work together during apply/dry‑run, and how to add a new agent or directive.
 
-## Purpose
-Owl automates:
-- Installing and upgrading Arch/AUR packages (via `yay`)
-- Managing dotfiles (copying from `~/.owl/dotfiles/` into place)
-- Running host-specific setup scripts (`~/.owl/setup/`) with change detection
-- Tracking managed packages and applied configs via lockfiles under `~/.owl/.state/`
+## What Is An Agent?
 
-It supports dry-run mode, per-host overrides, group includes, and minimal interactive uninstall.
+An agent is a focused subsystem that takes config entries and converges system state. Owl ships with agents for packages, dotfiles, setup scripts, services, and environment variables. Each agent:
 
-## Repo layout (key files)
-- `index.ts` — CLI entry (exports/starts `main`)
-- `src/main.ts` — Primary command dispatch and high-level orchestration (commands: apply, dry-run/dr, upgrade/up, uninstall, help, version)
-- `src/config.ts` — Parser for `.owl` config files plus host/group merging (exports `loadConfigForHost`)
-- `src/packages.ts` — Package analysis, install/remove, managed lock handling (`.state/managed.lock`), wrappers around `yay` and Bun spawn
-- `src/dotfiles.ts` — Dotfile analysis and management, hashing, copying, and `owl.lock` updates
-- `src/setup.ts` — Setup-script analysis/execution with hashing to avoid re-running unchanged scripts
-- `src/ui.ts` — Console UI helpers (icons, spinners, formatting, progress helpers)
-- Top-level docs and metadata:
-  - `README.md` — Usage, config format, features
-  - `package.json`, `tsconfig.json`, `bun.lock`
+- Defines inputs: parsed config fields and current system state.
+- Plans actions: a dry‑run summary that is safe and idempotent.
+- Applies changes: converges state with clear, minimal operations.
+- Updates state: writes lock/state files for future runs.
 
-## High-level flow (what each "agent" does)
-- CLI agent (`main.ts`)
-  - Parses command and options (--no-spinner, --verbose)
-  - Loads merged configuration for the current host using `config.ts`
-  - Coordinates package analysis/installation, dotfiles management, and setup scripts
-  - Handles special flows for `upgrade` and `uninstall`
-- Config agent (`config.ts`)
-  - Parses `main.owl`, optional host owl, and group includes (`@group ...`)
-  - Supports `@packages` block and `@package` entries, `:config` and `!setup` directives
-  - Outputs list of entries: package + configs + setups
-- Package agent (`packages.ts`)
-  - Reads/writes `.owl/.state/managed.lock`
-  - Queries system via `yay` to detect installed/outdated packages
-  - Decides package actions (install/skip/remove) and performs installs/removals
-  - Provides streaming install output and robust error messaging
-  - Protects critical system packages via `protected_packages`
-- Dotfiles agent (`dotfiles.ts`)
-  - Maps `:config src -> dest` to source path under `~/.owl/dotfiles/`
-  - Computes file/directory SHA256 hashes for change detection (uses `find` to hash dirs)
-  - Copies/overwrites destinations, updates `owl.lock` (`configs` map)
-  - Produces a list of actions and prints a summary with spinners
-- Setup agent (`setup.ts`)
-  - Validates and runs scripts from `~/.owl/setup/` (.sh, .js, .ts)
-  - Hashes scripts, skips unchanged ones, updates `owl.lock` (`setups` map)
-  - Uses `bun` (for .js/.ts) or `bash` (for .sh) to execute
-- UI/UX agent (`ui.ts`)
-  - Centralized console formatting: icons, spinners, lists, progress bars, headers, and small simulated progress helpers used during dry-run
+## Architecture Overview
 
-## Configuration format
-Supported in `README.md` and the parser:
-- Global: `~/.owl/main.owl`
-- Host overrides: `~/.owl/hosts/{hostname}.owl`
-- Groups: `~/.owl/groups/{groupname}.owl`
-- Directives:
-  - `@packages` block — list of package names
-  - `@package <name>` — start package block
-  - `:config <src> -> <dest>` — copy `~/.owl/dotfiles/<src>` to `<dest>`
-  - `!setup <script>` — run `~/.owl/setup/<script>`
-  - `@group <name>` — include group file (supports subdirs like `dev/editors`)
+- CLI entry: `src/cli/main.ts` parses arguments and routes commands.
+- Config parsing: `src/modules/config/parser.ts` (AST‑based, default) merges `~/.owl/main.owl`, `@group ...`, and `~/.owl/hosts/{host}.owl`.
+- Apply pipeline: `src/cli/handlers/apply.ts` orchestrates agents in this order:
+  1) Packages → 2) Dotfiles → 3) Setup Scripts (global first, then package) → 4) Services → 5) Package env vars → 6) Global env vars
+- Agents (modules): live under `src/modules/**` with thin CLI “processors” under `src/cli/handlers/**` for dry‑run/apply UX.
+- UI helpers: `src/ui/**` provides spinners, icons, and consistent formatting.
+- State/lock files: `~/.owl/.state/*` and `~/.owl/env.*` track change detection and environment.
 
-Note: `config.ts` resolves sources to absolute paths under `~/.owl/dotfiles/` and expands `~` in destinations.
+## Config To Data Flow
 
-## Lockfiles and state
-- `~/.owl/.state/managed.lock` — tracks managed packages, first/last seen, installed versions, and protected packages
-- `~/.owl/.state/owl.lock` — tracks config and setup hashes (prevents reapplying unchanged files/scripts)
+- Parser output: `loadConfigForHost(host)` returns:
+  - `entries: ConfigEntry[]` with `package`, `configs`, `setups`, `services`, `envs`, plus `sourceType`/`sourceFile` for provenance.
+  - `globalEnvs: Array<{ key; value }>` from `@env ...`.
+  - `globalScripts: string[]` from `@script ...`.
+- Apply handler: `src/cli/handlers/apply.ts` extracts flattened lists and calls per‑agent processors with `dryRun` flag.
 
-Both locks are JSON files managed via `packages.ts`, `dotfiles.ts`, and `setup.ts`.
+## Agents
 
-## How to run (development)
-- Install dependencies with Bun:
-  - bun install
-- Run:
-  - bun run index.ts apply    # default apply flow
-  - bun run index.ts dry-run  # preview only
-  - bun run index.ts upgrade  # upgrade system packages
-  - bun run index.ts uninstall
-- Dev run (watch):
-  - bun run --watch index.ts
+### Packages
 
-Options:
-- --no-spinner — disable spinners
-- --verbose — print full command output for long-running system commands
+- Files: `src/modules/packages/**`, processor: `src/cli/handlers/package-processor.ts`.
+- Responsibilities:
+  - Compute actions: `install | skip | remove` via `planPackageActions()`.
+  - Install/remove using Pacman (no AUR helper required); integrates AUR availability checks for UX.
+  - Track managed packages in `~/.owl/.state/managed.lock` with timestamps and protected packages.
+- Idempotency & safety:
+  - Version checks are tolerant of `-git` packages (treated as up‑to‑date).
+  - Removals skip protected packages from `DEFAULT_PROTECTED_PACKAGES`.
+- Dry‑run:
+  - Shows install/remove/skip per package, then exits without changes.
+- Apply:
+  - Installs/removes and updates `managed.lock` via `updateManagedPackages()`/`removeUnmanagedPackages()`.
 
-## Testing and simulation
-- The codebase simulates progress in dry-run via UI helpers. There's no automated test suite included.
-- Manual checks:
-  - Validate parsing for sample `.owl` files (create `~/.owl/main.owl` and `~/.owl/hosts/<host>.owl`)
-  - Run `dry-run` to ensure expected actions are displayed without changes
+### Dotfiles
 
-## Extension points and where to add agents
-- Add new package sources or package providers:
-  - Extend `packages.ts` to support alternate installers or additional queries (e.g., pacman-only mode)
-- Add more config directives:
-  - Update `config.ts` parser to recognize new directive tokens (e.g., :symlink, :template)
-- Add an agent to perform backups before overwrite:
-  - Insert into `dotfiles.manageConfigs` before copying to snapshot previous state to `~/.owl/.state/backups/`
-- Add parallel installs or concurrency:
-  - Modify `main.ts` installation loop to batch installs and call `installPackages` with multiple packages; `packages.installPackagesWithStreaming` already supports multi-package invocation
-- Add unit/integration tests:
-  - Create a tests directory and mock `bun`/$ calls with a lightweight harness or inject a `runner` interface for system calls
+- Files: `src/modules/dotfiles/index.ts`, processor: `src/cli/handlers/config-processor.ts`.
+- Inputs: `:config <src> -> <dest>` resolved from `~/.owl/dotfiles/<src>`.
+- Change detection:
+  - Computes hash of source; compares with last applied hash in `~/.owl/.state/owl.lock`.
+- Dry‑run:
+  - Summarizes pending creates/updates/conflicts, grouped by package.
+- Apply:
+  - Ensures parent directories, replaces atomically (`rm -rf` then `cp`), updates `owl.lock`.
+- Concurrency:
+  - Uses a simple limiter to bound parallel analysis for responsiveness.
 
-## Safety and notable behaviors
-- `managed.lock` prevents auto-removal of `protected_packages` (system-critical pkg list embedded)
-- Directory hashing uses `find` + `sha256sum` — this relies on available system tools
-- Script execution supports only `.js`, `.ts`, `.sh` — other extensions error
-- `upgrade` command runs `yay -Syu --noconfirm`, which will automatically upgrade system packages without interactive prompts (use with caution)
-- Removal uses `yay -Rns --noconfirm` — this will remove packages and their dependencies; protected packages are excluded
+### Setup Scripts
 
-## Troubleshooting
-- Permission errors when writing `~/.owl/.state/*`: ensure your HOME is correct and you have write permission
-- `find` / `sha256sum` missing: hashing of directories will fail; install coreutils or ensure these are present
-- `bun` runtime issues: confirm Bun is installed and compatible with the `@types/bun` dev dep
-- `yay` not available: commands relying on yay will fail (install yay or modify `packages.ts` to use pacman)
-- Unexpected config parsing: check whitespace and comment lines; parser expects directive tokens at start of trimmed lines
+- Files: `src/modules/setup/index.ts`, processor: `src/cli/handlers/setup-processor.ts`.
+- Inputs: `:script <file>` or legacy `!setup <file>` under `~/.owl/setup/`.
+- Supported: `.sh` via `bash`, `.js`/`.ts` via `bun`.
+- Change detection:
+  - Hash stored in `~/.owl/.state/owl.lock`; executes only when the script changes.
+- Dry‑run:
+  - Lists which scripts would execute/skip and any errors (missing/unsupported).
+- Apply:
+  - Executes with a timeout, updates `owl.lock`; continues best‑effort with clear error messages.
 
-## Quick code pointers (where to look)
-- CLI + orchestration: `src/main.ts`
-- Config parsing + host merging: `src/config.ts`
-- Package lifecycle + lock: `src/packages.ts`
-- Dotfile copy + hashing + lock: `src/dotfiles.ts`
-- Setup scripts + hashing + lock: `src/setup.ts`
-- Console UI and spinners: `src/ui.ts`
-- Readme + usage examples: `README.md`
+### Services
 
-## Suggested improvements
-- Add unit tests for `config.ts` parsing edge cases (groups, @packages, mixing directives)
-- Abstract system command runner to allow mocking in tests (replace direct use of `$` and `Bun.spawn` with an injectable runner)
-- Add safety confirmation flag for destructive actions (uninstall/remove) or a `--yes` to skip prompt
-- Improve directory hashing to use a pure-Node implementation (avoid system `find`/`sha256sum` dependency)
-- Add logging to a file for audit and easier debugging of failures
-- Add CI build/typecheck step (run `bun`/`tsc`) and pre-commit hooks for linting
+- Files: `src/modules/services/index.ts`, processor: `src/cli/handlers/service-processor.ts`.
+- Inputs: `:service <name> [ key = value, ... ]` with options:
+  - `scope=user|system` (default: `system`), `enable`, `start`, `restart`, `reload`, `mask` (booleans).
+- Behavior:
+  - `systemctl` (or `systemctl --user` for user services). Uses sudo for system unit changes as needed.
+  - Reads current status and performs only necessary actions.
+- Dry‑run:
+  - Shows planned operations per unit.
+- Apply:
+  - Best‑effort operations; logs warnings instead of hard‑failing on non‑critical errors.
 
-## Summary
-Owl is a concise, pragmatic tool that combines package management, dotfile syncing, and setup script orchestration for host-specific environments. The code is modular and split into clear agent-like responsibilities: config parsing, package management, dotfile management, setup script execution, and UI. It is straightforward to extend (new directives, new package backends) and ready for immediate use on an Arch Linux system with Bun installed.
+### Environment Variables
 
----
+- Files: `src/modules/env/index.ts`, processor: `src/cli/handlers/env-processor.ts`.
+- Package envs: `:env KEY = VALUE` aggregated across packages.
+- Global envs: `@env KEY = VALUE` aggregated top‑level and host overrides.
+- Outputs:
+  - `~/.owl/env.sh` (bash/zsh) and `~/.owl/env.fish` (fish) regenerated atomically on each run.
+  - Keys of global envs tracked in `~/.owl/.state/global-env.lock` (values are not stored for security).
+- Shell integration:
+  - Manually source these files in your shell config. See config spec for examples.
+- Dry‑run:
+  - Prints which env vars would be set (global and package) with values.
+- Apply:
+  - Writes clean files (even when empty) under a lock to avoid races.
 
-If you want, I can also shorten this to a one-page README summary or add a CONTRIBUTING.md with development notes.
+## State And Lock Files
+
+- `~/.owl/.state/managed.lock`: Managed packages and metadata (timestamps, installed versions, protected list).
+- `~/.owl/.state/owl.lock`: Hashes for dotfiles and setup scripts for change detection.
+- `~/.owl/.state/global-env.lock`: Keys for global env vars.
+- `~/.owl/env.sh`, `~/.owl/env.fish`: Generated environment files to be sourced by shells.
+
+## Dry‑Run Contract
+
+- Agents must avoid side effects in dry‑run. Show exactly what would change and why.
+- Prefer precise, grouped output and consistent formatting via `src/ui` spinners/icons.
+- Keep dry‑run and apply code paths close for parity but clearly separate the side effects.
+
+## Adding A New Directive Or Agent
+
+1) Update types
+- Edit `src/types/index.ts` to add new types to `ConfigEntry` or global outputs.
+
+2) Parse config
+- In `src/modules/config/parser.ts`:
+  - Add a token in the lexer (e.g., `COLON_FOO`).
+  - Extend the parser to create an AST node.
+  - In `transformToEntries()`, map the AST node into `entries` or global outputs (e.g., add `foos: ...` to `ConfigEntry`).
+
+3) Implement the agent
+- Create a module under `src/modules/<agent>/index.ts` that implements:
+  - Planning helpers (compute current state vs desired).
+  - Apply functions (idempotent convergence, minimal changes).
+  - Any lock/state handling needed (prefer atomic writes and file locks via `src/utils/atomic.ts`).
+
+4) Add a CLI processor
+- Add `src/cli/handlers/<agent>-processor.ts` that:
+  - Accepts flattened inputs from `apply.ts`.
+  - Implements dry‑run output and calls the module’s apply functions.
+  - Uses `src/ui` for spinners/icons/formatting.
+
+5) Wire into the pipeline
+- In `src/cli/handlers/apply.ts`, extract your new data from the parsed config and call your processor in the desired order.
+
+6) Validate and document
+- Ensure dry‑run prints exactly what apply will change.
+- Update `README.md`, `config-specs.md`, and this guide if you introduced a new directive.
+
+## UX And Safety Guidelines
+
+- Prefer minimal, clear actions; avoid surprising side effects.
+- Keep output consistent: headers, spinners, and icons from `src/ui`.
+- Use `safeExecute()` for error boundaries and report friendly messages.
+- Avoid unnecessary `sudo`; only the services agent uses privileged operations for system units.
+- Use timeouts for external commands (e.g., setup scripts) and surface actionable errors.
+- Constrain parallelism where it improves UX without overwhelming the system.
+
+## Execution Order Rationale
+
+- Packages first: provide binaries and files for later steps.
+- Dotfiles next: place configs that scripts/services might rely on.
+- Setup scripts: perform one‑time or change‑triggered tasks once files are in place.
+- Services: enable/start after required packages/configs exist.
+- Env vars last: regenerate final environment so shells can pick up changes.
+
+## Useful Entry Points
+
+- CLI: `src/cli/main.ts`, commands in `src/cli/commands/index.ts`.
+- Apply: `src/cli/handlers/apply.ts`.
+- Packages: `src/modules/packages/index.ts`.
+- Dotfiles: `src/modules/dotfiles/index.ts`.
+- Setup: `src/modules/setup/index.ts`.
+- Services: `src/modules/services/index.ts`.
+- Env: `src/modules/env/index.ts`.
+- Parser: `src/modules/config/parser.ts`.
+- UI helpers: `src/ui/**`.
+
+If you want help sketching a new directive, open an issue with a concrete example and desired dry‑run/apply behavior.
+

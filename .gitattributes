@@ -1,0 +1,21 @@
+# Normalize line endings for text files
+* text=auto eol=lf
+
+# Ensure lockfiles and snapshots are treated as text
+bun.lock text eol=lf
+package.json text eol=lf
+tsconfig.json text eol=lf
+
+# Improve diffs for common formats
+*.md diff=markdown
+*.ts diff=javascript
+*.js diff=javascript
+*.json diff=json
+
+# Treat images/binaries appropriately
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary

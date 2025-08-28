@@ -1,0 +1,257 @@
+/**
+ * Track and Hide command handlers for Owl
+ *
+ * - track: find explicitly-installed packages not managed by Owl, not in defaults, not hidden; interactively add to a config file
+ * - hide: same candidate list; interactively add a package to the hidden list so it won't appear in track
+ */
+
+import pc from "picocolors";
+import { join } from "path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { ui } from "../../ui";
+import { getHomeDirectory, ensureOwlDirectories } from "../../utils/fs";
+import { atomicWriteFile } from "../../utils/atomic";
+import { loadConfigForHost } from "../../modules/config";
+import { hostname } from "os";
+import { runWithOutput } from "../../utils/proc";
+import type { CommandOptions } from "../commands";
+import { getRelevantConfigFilesForCurrentSystem } from "../../modules/config";
+
+// State file paths
+function stateDir(): string {
+  const home = getHomeDirectory();
+  return join(home, ".owl", ".state");
+}
+
+const UNTRACKED_FILE = () => join(stateDir(), "track-untracked.lock");
+// Legacy files (for merging on first run)
+const LEGACY_HIDE_FILE = () => join(stateDir(), "track-hide.lock");
+const LEGACY_DEFAULTS_FILE = () => join(stateDir(), "track-defaults.lock");
+
+// Load JSON array from a state file
+function loadList(filePath: string, fallback: string[] = []): string[] {
+  try {
+    if (!existsSync(filePath)) return [...fallback];
+    const data = readFileSync(filePath, "utf8");
+    const arr = JSON.parse(data);
+    if (Array.isArray(arr)) return arr.filter(Boolean);
+    return [...fallback];
+  } catch {
+    return [...fallback];
+  }
+}
+
+// Save JSON array to state file
+function saveList(filePath: string, items: string[]): void {
+  try {
+    ensureOwlDirectories();
+    const dir = stateDir();
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    atomicWriteFile(filePath, JSON.stringify(Array.from(new Set(items)).sort(), null, 2));
+  } catch {
+    // best-effort
+  }
+}
+
+// Seed list that Owl considers default/untracked for new installs
+function defaultUntrackedSeed(): string[] {
+  return [
+    "linux", "linux-firmware", "intel-ucode", "amd-ucode",
+    "base", "base-devel", "glibc", "filesystem", "bash",
+    "coreutils", "findutils", "grep", "gawk", "sed", "less",
+    "util-linux", "procps-ng", "shadow", "iproute2", "iputils",
+    "pacman", "pacman-contrib", "gzip", "xz", "tar",
+    "openssl", "ca-certificates", "e2fsprogs"
+  ];
+}
+
+// Load unified untracked list, merging legacy files on first run
+function loadUntracked(): string[] {
+  const untrackedPath = UNTRACKED_FILE();
+  if (existsSync(untrackedPath)) {
+    return loadList(untrackedPath, []);
+  }
+  // Merge legacy lists with seed
+  const legacyHide = loadList(LEGACY_HIDE_FILE(), []);
+  const legacyDefaults = loadList(LEGACY_DEFAULTS_FILE(), []);
+  const merged = Array.from(new Set([...defaultUntrackedSeed(), ...legacyDefaults, ...legacyHide]));
+  saveList(untrackedPath, merged);
+  return merged;
+}
+
+// Get explicitly installed packages via pacman (-Qqe)
+async function getExplicitlyInstalled(): Promise<string[]> {
+  const output = await runWithOutput("pacman", ["-Qqe"], { timeoutMs: 15000 });
+  return output.split("\n").filter(Boolean);
+}
+
+// Build candidate list: explicit - managed - defaults - hidden
+async function computeCandidates(): Promise<string[]> {
+  const explicit = await getExplicitlyInstalled();
+  // Derive currently managed from config entries
+  const cfg = await loadConfigForHost(hostname());
+  const managedNow = Array.from(new Set((cfg.entries || []).map((e: any) => e.package).filter(Boolean)));
+
+  const untracked = loadUntracked();
+
+  const managedSet = new Set(managedNow);
+  const untrackedSet = new Set(untracked);
+
+  const candidates = explicit.filter(name => !managedSet.has(name) && !untrackedSet.has(name));
+  // Sort alphabetically for predictability
+  return candidates.sort((a, b) => a.localeCompare(b));
+}
+
+// Interactive single-number prompt
+async function promptSelection(max: number): Promise<number> {
+  const { createInterface } = await import("readline");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(`${pc.green("[Enter number:]")} `, (answer) => {
+      rl.close();
+      const num = parseInt(String(answer).trim(), 10);
+      resolve(isNaN(num) ? 0 : num);
+    });
+  });
+}
+
+// Discover Owl config files under ~/.owl
+// (legacy generic selector removed; use relevant-only selector below)
+
+// Append @package entry to selected config
+async function addPackageToFile(packageName: string, configFile: string): Promise<void> {
+  const homeDir = getHomeDirectory();
+  const configPath = configFile.replace(/^~/, homeDir);
+  let content = "";
+  try { content = readFileSync(configPath, "utf8"); }
+  catch {
+    content = `# Owl configuration file\n# Generated by owl track\n\n@packages\n\n@package ${packageName}\n`;
+    writeFileSync(configPath, content, "utf8");
+    return;
+  }
+  const line = `@package ${packageName}`;
+  if (!content.includes(line)) {
+    content += `\n@package ${packageName}\n`;
+    writeFileSync(configPath, content, "utf8");
+  }
+}
+
+// Recursively collect relevant config files: main, host, and groups included within
+// (replaced by util in selectConfigFileRelevant)
+
+export async function handleTrackCommand(_args: string[], _options: CommandOptions): Promise<void> {
+
+  ui.header("Track Packages");
+  const candidates = await computeCandidates();
+
+  if (candidates.length === 0) {
+    ui.ok("No untracked explicit packages found");
+    return;
+  }
+
+  console.log(`\n${pc.bold("Found")} ${candidates.length} untracked package(s):\n`);
+  const bracketFunc = pc.green; const nameFunc = pc.white;
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const pkg = candidates[i]; if (!pkg) continue;
+    const numberPart = `${bracketFunc("[")}${i + 1}${bracketFunc("]")}`;
+    console.log(`${numberPart} ${nameFunc(pkg)}`);
+  }
+  console.log();
+
+  const selection = await promptSelection(candidates.length);
+  if (!(selection > 0 && selection <= candidates.length)) return;
+  const selected = candidates[selection - 1]!;
+
+  const targetFile = await selectConfigFileRelevant();
+  if (!targetFile) return;
+
+  await addPackageToFile(selected, targetFile);
+  ui.success(`Tracked '${selected}' in ${targetFile}`);
+}
+
+export async function handleHideCommand(args: string[], _options: CommandOptions): Promise<void> {
+  // Options for hide: --show-hidden, --remove <pkg>
+  const showHidden = args.includes("--show-hidden") || args.includes("--show");
+  const removeArg = (() => {
+    const eq = args.find(a => a.startsWith("--remove="));
+    if (eq) return eq.split("=", 2)[1] || "";
+    const idx = args.indexOf("--remove");
+    if (idx >= 0 && idx + 1 < args.length) return args[idx + 1] || "";
+    return "";
+  })();
+
+  if (showHidden) {
+    ui.header("Hidden (Untracked) Packages");
+    const list = loadUntracked();
+    if (list.length === 0) {
+      ui.ok("No hidden packages");
+      return;
+    }
+    for (const name of list) console.log(name);
+    return;
+  }
+
+  if (removeArg) {
+    ui.header("Update Hidden List");
+    const list = loadUntracked();
+    const filtered = list.filter(n => n !== removeArg);
+    if (filtered.length === list.length) {
+      ui.warn(`'${removeArg}' not found in hidden list`);
+    } else {
+      saveList(UNTRACKED_FILE(), filtered);
+      ui.success(`Removed '${removeArg}' from hidden list`);
+    }
+    return;
+  }
+
+  ui.header("Hide Packages");
+  const candidates = await computeCandidates();
+  if (candidates.length === 0) {
+    ui.ok("No candidates to hide");
+    return;
+  }
+
+  console.log(`\n${pc.bold("Candidate packages (hide to ignore in track)")}:\n`);
+  const bracketFunc = pc.green; const nameFunc = pc.white;
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const pkg = candidates[i]; if (!pkg) continue;
+    const numberPart = `${bracketFunc("[")}${i + 1}${bracketFunc("]")}`;
+    console.log(`${numberPart} ${nameFunc(pkg)}`);
+  }
+  console.log();
+
+  const selection = await promptSelection(candidates.length);
+  if (!(selection > 0 && selection <= candidates.length)) return;
+  const selected = candidates[selection - 1]!;
+
+  const current = loadUntracked();
+  current.push(selected);
+  saveList(UNTRACKED_FILE(), current);
+  ui.success(`Hidden '${selected}' from track suggestions`);
+}
+
+// Select only relevant files for this system (main, host, and included groups)
+async function selectConfigFileRelevant(): Promise<string | null> {
+  const home = getHomeDirectory();
+  const absFiles = await getRelevantConfigFilesForCurrentSystem();
+  const owlFiles = absFiles.map(p => p.replace(home, '~'));
+  if (owlFiles.length === 0) return "~/.owl/main.owl";
+  if (owlFiles.length === 1) return owlFiles[0] || null;
+
+  console.log(`\n${pc.bold("Select a configuration file:")}\n`);
+  const bracketFunc = pc.green; const fileFunc = pc.cyan; const pathFunc = pc.white;
+
+  for (let i = owlFiles.length - 1; i >= 0; i--) {
+    const file = owlFiles[i]; if (!file) continue;
+    const friendlyPath = file.replace(/^~\//, "");
+    const numberPart = `${bracketFunc("[")}${i + 1}${bracketFunc("]")}`;
+    const fileName = fileFunc(friendlyPath.split('/').pop() || friendlyPath);
+    const pathPart = `(${pathFunc(friendlyPath)})`;
+    console.log(`${numberPart} ${fileName} ${pathPart}`);
+  }
+  console.log();
+
+  const selection = await promptSelection(owlFiles.length);
+  if (selection > 0 && selection <= owlFiles.length) return owlFiles[selection - 1] || null;
+  return null;
+}
