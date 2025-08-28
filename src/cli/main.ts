@@ -50,7 +50,7 @@ function showHelp() {
     "--no-spinner   Disable loading animations",
     "--verbose      Show full command output instead of progress spinners",
     "--devel        Check VCS packages (-git, -hg, etc.) for updates (with upgrade)",
-    "--config-parser Use experimental AST-based config parser",
+    "--legacy-parser Use legacy config parser",
     "hide: --show-hidden       Print current hidden list (untracked)",
     "hide: --remove <pkg>      Remove package from hidden list"
   ], { indent: true, color: (s: string) => `\x1b[37m${s}\x1b[0m` });
@@ -72,7 +72,17 @@ export async function main() {
     };
     process.once('SIGINT', abort);
     process.once('SIGTERM', abort);
-    const [, , ...args] = process.argv;
+
+    // In Bun standalone executable, process.argv contains:
+    // ["bun", "/$bunfs/root/owl", ...userArgs] when userArgs provided
+    // ["bun", "/$bunfs/root/owl", "./path/to/executable"] when no userArgs
+    let args = process.argv.slice(2);
+
+    // Filter out the executable path if it's the only argument (no user args)
+    if (args.length === 1 && args[0] && (args[0].endsWith('owl') || args[0] === './dist/owl')) {
+      args = [];
+    }
+
     const { command, options, args: remainingArgs } = parseCommand(args);
 
     if (isHelpCommand(command)) {

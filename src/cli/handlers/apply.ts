@@ -32,11 +32,12 @@ export async function handleApplyCommand(dryRun: boolean, options: CommandOption
     // Extract all components from config
     const configData = extractConfigData(configResult);
 
-    // Show header
+    // Show main header
     ui.header(dryRun ? "Dry run" : "Sync");
 
     // Process packages first (and only check AUR if needed)
     if (configData.packages.length > 0) {
+      ui.sectionHeader("Analyze", "blue");
       const aurAvailable = dryRun ? true : await checkAURStatus();
       if (!aurAvailable) {
         // Show AUR down message once
@@ -57,7 +58,7 @@ export async function handleApplyCommand(dryRun: boolean, options: CommandOption
 
      // Show completion message
      if (dryRun) {
-       ui.success("Dry run completed successfully - no changes made");
+       ui.success("Dry run completed successfully");
      } else {
        ui.systemMessage("System sync complete");
      }

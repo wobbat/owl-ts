@@ -41,7 +41,8 @@ export async function processPackages(
    const toInstall = packageActions.filter(p => p.status === 'install');
    const toRemove = packageActions.filter(p => p.status === 'remove');
 
-   // Show overview of what will be done
+   // Show info section
+   ui.sectionHeader("Info", "red");
    ui.overview({
      host: hostname(),
      packages: uniquePackages.length
@@ -149,11 +150,12 @@ async function removePackages(toRemove: PackageAction[], configEntries: ConfigEn
    /**
     * Upgrade system packages with comprehensive flow matching Go version
     */
-   async function upgradeSystemPackages(options: CommandOptions, aurAvailable: boolean = true): Promise<void> {
-       const { PacmanManager } = await import("../../modules/pacman/manager");
-       const pacmanManager = new PacmanManager();
+    async function upgradeSystemPackages(options: CommandOptions, aurAvailable: boolean = true): Promise<void> {
+        const { PacmanManager } = await import("../../modules/pacman/manager");
+        const pacmanManager = new PacmanManager();
 
-       ui.showSystemMaintenance();
+        ui.sectionHeader("System", "yellow");
+        ui.showSystemMaintenance();
 
        if (!aurAvailable) {
          console.log("Warning: AUR is currently unavailable. Skipping AUR package upgrades.");

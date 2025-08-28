@@ -54,7 +54,9 @@ export async function syncDotfilesByPackage(
 ) {
   const packagesWithConfigs = configEntries.filter(entry => entry.configs && entry.configs.length > 0);
   if (packagesWithConfigs.length === 0) return;
-  console.log("Config management:");
+  
+  const { ui } = await import("../../ui");
+  ui.configManagementHeader();
 
   const packagesWithChanges: typeof configEntries = [];
   const packagesUpToDate: typeof configEntries = [];
@@ -138,16 +140,16 @@ export async function syncDotfilesByPackage(
 async function showDotfilesSummary(packages: Array<{package: string, configs?: Array<{source: string, destination: string}>, sourceFile?: string, sourceType?: string, groupName?: string}>) {
   if (packages.length === 0) return;
   const packageCount = packages.length;
-  const { styles, formatPackageSource } = await import("../../ui");
+  const { styles, formatPackageSource, ui } = await import("../../ui");
   if (packageCount === 1) {
     const entry = packages[0]!;
     const sourcePrefix = formatPackageSource({ sourceType: entry.sourceType, sourceFile: entry.sourceFile, groupName: entry.groupName });
-    process.stdout.write(`${sourcePrefix}${pc.cyan(entry.package)} ${styles.muted("->")}\n`);
-    const summarySpinner = spinner("  Dotfiles - checking...", { enabled: true }); summarySpinner.stop(""); console.log();
+    process.stdout.write(`  ${sourcePrefix}${pc.cyan(entry.package)} ${styles.muted("->")}\n`);
+    const summarySpinner = spinner("    Dotfiles - checking...", { enabled: true }); summarySpinner.stop(""); console.log();
   } else {
     const packageNames = packages.map(entry => entry.package);
     const summary = packageCount <= 5 ? packageNames.join(", ") : `${packageCount} packages`;
-    console.log(`${pc.cyan(summary)} ${styles.muted("->")}`);
-    const summarySpinner = spinner("  Dotfiles - checking...", { enabled: true }); summarySpinner.stop(""); console.log();
+    ui.configPackagesSummary(summary);
+    const summarySpinner = spinner("    Dotfiles - checking...", { enabled: true }); summarySpinner.stop(""); console.log();
   }
 }
