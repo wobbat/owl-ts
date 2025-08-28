@@ -4,16 +4,8 @@ import { resolve } from "path";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 
-interface OwlConfigEntry {
-  package: string;
-  configs: Array<{ source: string; destination: string }>;
-  setups: string[];
-  services?: string[];
-  envs?: Array<{ key: string; value: string }>;
-  sourceFile?: string;
-  sourceType?: 'main' | 'host' | 'group';
-  groupName?: string;
-}
+import type { ConfigEntry, ServiceSpec } from "../../types";
+type OwlConfigEntry = ConfigEntry;
 
 class ConfigParseError extends Error {
   constructor(
@@ -129,8 +121,9 @@ function parseOwlConfig(raw: string, visited: Set<string> = new Set(), options: 
   const strict = options.strict ?? true;
   const allowInlineComments = options.allowInlineComments ?? true;
 
-  function createEntry(packageName: string, configs: Array<{ source: string; destination: string }>, setups: string[], services: string[], envs: Array<{ key: string; value: string }>): OwlConfigEntry {
-    return { package: packageName, configs, setups, services, envs, sourceFile: sourcePath, sourceType, groupName };
+  function createEntry(packageName: string, configs: Array<{ source: string; destination: string }>, setups: string[], svcs: string[], envs: Array<{ key: string; value: string }>): OwlConfigEntry {
+    const servicesStruct: ServiceSpec[] = (svcs || []).map(name => ({ name, enable: true, start: true }));
+    return { package: packageName, configs, setups, services: servicesStruct, envs, sourceFile: sourcePath, sourceType, groupName } as OwlConfigEntry;
   }
 
   function errorAt(lineNum: number, rawLine: string, message: string): void {
@@ -212,7 +205,7 @@ function parseOwlConfig(raw: string, visited: Set<string> = new Set(), options: 
   return { entries, globalEnvs: parsedGlobalEnvs };
 }
 
-export async function loadConfigForHost(hostname: string): Promise<{ entries: OwlConfigEntry[], globalEnvs: Array<{ key: string; value: string }> }> {
+export async function loadConfigForHost(hostname: string): Promise<{ entries: OwlConfigEntry[], globalEnvs: Array<{ key: string; value: string }>, globalScripts: string[] }> {
   const OWL_ROOT = resolve(homedir(), ".owl");
   const globalPath = resolve(OWL_ROOT, "main.owl");
   try {
@@ -259,7 +252,7 @@ export async function loadConfigForHost(hostname: string): Promise<{ entries: Ow
     if (existsSync(hostPath)) { hostRaw = await readFile(hostPath, "utf8"); allConfigContent.push(hostRaw); }
 
     const combinedGlobalEnvs = [...globalGlobalEnvs, ...hostGlobalEnvs];
-    return { entries: Object.values(merged), globalEnvs: combinedGlobalEnvs };
+    return { entries: Object.values(merged), globalEnvs: combinedGlobalEnvs, globalScripts: [] };
   } catch (error) {
     if (error instanceof ConfigParseError) throw error;
     throw new ConfigParseError('<unknown>', 0, '', `Failed to load configuration: ${error instanceof Error ? error.message : String(error)}`);

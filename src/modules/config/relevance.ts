@@ -27,7 +27,8 @@ export async function getRelevantConfigFilesForCurrentSystem(): Promise<string[]
         const line = rawLine.replace(/#.*/, '').trim();
         const m = line.match(/^@group\s+(\S+)/);
         if (m) {
-          const name = m[1];
+          const name = m[1] || "";
+          if (!name) continue;
           if (visitedGroups.has(name)) continue;
           visitedGroups.add(name);
           const p = join(owlRoot, 'groups', `${name}.owl`);
@@ -54,4 +55,3 @@ export async function getRelevantConfigFilesForCurrentSystem(): Promise<string[]
   for (const gp of groupPaths) absFiles.add(gp);
   return Array.from(absFiles);
 }
-

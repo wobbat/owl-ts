@@ -3,19 +3,11 @@ import { existsSync, readFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { homedir } from "os";
 import { resolve } from "path";
+import type { ConfigEntry, ServiceSpec } from "../../types";
 
 type SourceType = 'main' | 'host' | 'group';
 
-interface OwlConfigEntry {
-  package: string;
-  configs: Array<{ source: string; destination: string }>;
-  setups: string[];
-  services?: Array<{ name: string; scope?: 'system' | 'user'; enable?: boolean; start?: boolean; restart?: boolean; reload?: boolean; mask?: boolean }>;
-  envs?: Array<{ key: string; value: string }>;
-  sourceFile?: string;
-  sourceType?: SourceType;
-  groupName?: string;
-}
+type OwlConfigEntry = ConfigEntry;
 
 class ConfigParseError extends Error {
   constructor(
@@ -173,7 +165,7 @@ function parseTokens(tokens: Token[]): Node {
           const parts = propsRaw.split(',').map(s => s.trim()).filter(Boolean);
           for (const p of parts) {
             const m = p.match(/^(\S+)\s*=\s*(.+)$/);
-            if (m) {
+            if (m && m[1]) {
               const key = m[1];
               let val: any = m[2];
               if (/^(true|false)$/i.test(val)) val = /^true$/i.test(val);
@@ -298,7 +290,7 @@ function transformToEntries(ast: Node, ctx: { sourcePath: string; sourceType: So
         if (!currentPkg) throw new ConfigParseError(ast.file, (node as any).line, ':service', 'Package context required before :service');
         const props = (node as any).props || {};
         const scope = props.scope === 'user' ? 'user' : 'system';
-        const svc = {
+        const svc: ServiceSpec = {
           name: (node as any).name,
           scope,
           // Defaults: if not specified, enable and start by default
@@ -307,7 +299,7 @@ function transformToEntries(ast: Node, ctx: { sourcePath: string; sourceType: So
           restart: props.restart !== undefined ? Boolean(props.restart) : undefined,
           reload: props.reload !== undefined ? Boolean(props.reload) : undefined,
           mask: props.mask !== undefined ? Boolean(props.mask) : undefined,
-        } as OwlConfigEntry['services'][number];
+        };
         ensureEntry(currentPkg).services!.push(svc);
         break;
       }
