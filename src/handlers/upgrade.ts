@@ -39,22 +39,23 @@ export async function handleUpgradeCommand(options: CommandOptions): Promise<voi
     packages: outdatedPackages.length
   });
 
-  console.log("Packages to upgrade:");
-  for (const pkg of outdatedPackages) {
-    console.log(`  ${icon.upgrade} ${pc.white(pkg)}`);
-  }
-  console.log();
+  // Show packages to upgrade (matching Go version format)
+  ui.showPackagesToUpgrade(outdatedPackages);
 
-  const upgradeSpinner = spinner(`Upgrading ${outdatedPackages.length} packages...`, { enabled: !options.noSpinner });
+  const upgradeSpinner = spinner(`Upgrading ${outdatedPackages.length} packages...`, { enabled: !options.noSpinner && !options.verbose });
 
   await safeExecute(async () => {
     if (options.verbose) {
       await pacmanManager.upgradeSystem(true);
     } else {
-      await pacmanManager.upgradeSystem(false);
+      await pacmanManager.upgradeSystemWithProgress(false, (message: string) => {
+        upgradeSpinner.update(message);
+      });
     }
   }, "System upgrade failed");
 
-  upgradeSpinner.stop("System upgrade completed successfully");
+  if (!options.verbose) {
+    upgradeSpinner.stop("System upgrade completed successfully");
+  }
   ui.celebration("All packages upgraded!");
 }

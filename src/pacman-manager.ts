@@ -43,9 +43,6 @@ export class PacmanManager {
       if (verbose) {
         console.log(`Package ${packageName} is already installed`);
       }
-      if (progressCallback) {
-        progressCallback(`${packageName} already installed`);
-      }
       return;
     }
 
@@ -59,7 +56,7 @@ export class PacmanManager {
     }
 
     try {
-      // Check if package exists in official repositories
+      // Check if package exists in official repositories (individual package)
       await $`pacman -Si ${packageName}`.quiet();
 
       // Package exists in official repos, install with pacman
@@ -78,17 +75,47 @@ export class PacmanManager {
       }
 
     } catch {
-      // Package not found in official repositories, try AUR
-      if (progressCallback) {
-        progressCallback(`${packageName} not in official repositories, trying AUR`);
-      }
+      // Package not found as individual package, check if it's a package group
+      try {
+        await $`pacman -Sg ${packageName}`.quiet();
 
-      if (verbose) {
-        console.log(`Package ${packageName} not found in official repositories, trying AUR...`);
-      }
+        // Check if package group is already installed
+        if (await this.isPackageGroupInstalled(packageName)) {
+          if (verbose) {
+            console.log(`Package group ${packageName} is already installed`);
+          }
+          return;
+        }
 
-      // Fall back to AUR manager
-      await this.aurFallback.installPackageWithProgress(packageName, verbose, progressCallback);
+        // Package group exists in official repos, install with pacman
+        if (verbose) {
+          console.log(`Installing package group ${packageName} from official repositories...`);
+          await $`sudo pacman -S --noconfirm ${packageName}`.quiet();
+        } else {
+          await $`sudo pacman -S --noconfirm ${packageName}`.quiet();
+        }
+
+        if (verbose) {
+          console.log(`Successfully installed package group ${packageName} from official repositories`);
+        }
+
+        if (progressCallback) {
+          progressCallback(`Successfully installed package group ${packageName} from official repositories`);
+        }
+
+      } catch {
+        // Package not found in official repositories (neither individual nor group), try AUR
+        if (progressCallback) {
+          progressCallback(`${packageName} not in official repositories, trying AUR`);
+        }
+
+        if (verbose) {
+          console.log(`Package ${packageName} not found in official repositories, trying AUR...`);
+        }
+
+        // Fall back to AUR manager
+        await this.aurFallback.installPackageWithProgress(packageName, verbose, progressCallback);
+      }
     }
   }
 
@@ -197,6 +224,30 @@ export class PacmanManager {
   }
 
   /**
+   * Get list of outdated packages using pacman
+   */
+  async getOutdatedPackages(): Promise<string[]> {
+    try {
+      const output = await $`pacman -Qu`.text();
+      const outdated: string[] = [];
+
+      for (const line of output.split('\n')) {
+        if (line.trim()) {
+          const parts = line.split(/\s+/);
+          if (parts.length > 0 && parts[0]) {
+            outdated.push(parts[0]);
+          }
+        }
+      }
+
+      return outdated;
+    } catch {
+      // If no updates available, pacman returns exit code 1 but no error output
+      return [];
+    }
+  }
+
+  /**
    * Search for packages using pacman first, then AUR
    */
   async searchPackages(searchTerm: string): Promise<SearchResult[]> {
@@ -209,6 +260,24 @@ export class PacmanManager {
       results.push(...pacmanResults);
     } catch {
       // Ignore pacman search errors
+    }
+
+    // Also check if the search term is a package group
+    try {
+      const groupOutput = await $`pacman -Sg ${searchTerm}`.text();
+      if (groupOutput.trim()) {
+        // If it's a package group, add it as a result
+        results.unshift({
+          name: searchTerm,
+          version: "group",
+          description: `Package group containing multiple packages`,
+          repository: "core",
+          installed: await this.isPackageInstalled(searchTerm),
+          inConfig: false
+        });
+      }
+    } catch {
+      // Ignore group search errors
     }
 
     // Search AUR for comprehensive results
@@ -243,36 +312,45 @@ export class PacmanManager {
   }
 
   /**
-   * Get list of outdated packages using pacman
-   */
-  async getOutdatedPackages(): Promise<string[]> {
-    try {
-      const output = await $`pacman -Qu`.text();
-      const outdated: string[] = [];
-
-      for (const line of output.split('\n')) {
-        if (line.trim()) {
-          const parts = line.split(/\s+/);
-          if (parts.length > 0) {
-            outdated.push(parts[0]);
-          }
-        }
-      }
-
-      return outdated;
-    } catch {
-      // If no updates available, pacman returns exit code 1 but no error output
-      return [];
-    }
-  }
-
-  /**
-   * Check if a package is installed using pacman
+   * Check if a package is installed
    */
   async isPackageInstalled(packageName: string): Promise<boolean> {
     try {
       await $`pacman -Qq ${packageName}`.quiet();
       return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Check if a package group is installed (by checking if any of its packages are installed)
+   */
+  async isPackageGroupInstalled(groupName: string): Promise<boolean> {
+    try {
+      // Get the list of packages in the group
+      const output = await $`pacman -Sg ${groupName}`.text();
+      const lines = output.trim().split('\n');
+      const groupPackages: string[] = [];
+
+      for (const line of lines) {
+        const parts = line.split(/\s+/);
+        if (parts.length >= 2) {
+          const pkg = parts[1];
+          if (pkg && pkg !== groupName) {
+            groupPackages.push(pkg);
+          }
+        }
+      }
+
+      // Check if any package from the group is installed
+      for (const pkg of groupPackages) {
+        if (await this.isPackageInstalled(pkg)) {
+          return true;
+        }
+      }
+
+      return false;
     } catch {
       return false;
     }
@@ -336,8 +414,10 @@ export class PacmanManager {
     const lines = output.split('\n');
 
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
+      const line = lines[i];
       if (!line) continue;
+      const trimmedLine = line.trim();
+      if (!trimmedLine) continue;
 
       // Check if this is a package line (starts with repo/package)
       if (line.includes('/') && !line.startsWith('    ')) {
@@ -347,6 +427,8 @@ export class PacmanManager {
         const fullName = parts[0];
         const versionInfo = parts[1];
 
+        if (!fullName || !versionInfo) continue;
+
         // Parse repository and package name
         const nameParts = fullName.split('/');
         if (nameParts.length !== 2) continue;
@@ -354,10 +436,12 @@ export class PacmanManager {
         const repository = nameParts[0];
         const packageName = nameParts[1];
 
+        if (!repository || !packageName) continue;
+
         // Extract version from the version info
         let version = '';
         if (versionInfo.includes(' ')) {
-          version = versionInfo.split(' ')[0];
+          version = versionInfo.split(' ')[0] || '';
         } else {
           version = versionInfo;
         }
@@ -365,10 +449,13 @@ export class PacmanManager {
         // Get description from next line if available
         let description = '';
         if (i + 1 < lines.length) {
-          const nextLine = lines[i + 1].trim();
-          if (nextLine.startsWith('    ')) {
-            description = nextLine.trim();
-            i++; // Skip the description line in next iteration
+          const nextLineRaw = lines[i + 1];
+          if (nextLineRaw) {
+            const nextLine = nextLineRaw.trim();
+            if (nextLine.startsWith('    ')) {
+              description = nextLine.trim();
+              i++; // Skip the description line in next iteration
+            }
           }
         }
 

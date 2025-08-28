@@ -13,6 +13,7 @@ import {
   isVersionCommand,
   isUpgradeCommand,
   isDryRunCommand,
+  isDotsCommand,
   isUninstallCommand,
   isAddCommand,
   isConfigEditCommand,
@@ -22,7 +23,8 @@ import {
 import {
   handleUpgradeCommand,
   handleUninstallCommand,
-  handleApplyCommand
+  handleApplyCommand,
+  handleDotsCommand
 } from "./handlers/index";
 import { handleAddCommand } from "./handlers/add";
 import { handleConfigEditCommand } from "./handlers/configedit";
@@ -49,19 +51,20 @@ function showHelp() {
   console.log("\x1b[1mUsage:\x1b[0m");
   console.log("  owl <command> [options]\n");
 
-   console.log("\x1b[1mCommands:\x1b[0m");
-   ui.list([
-     "apply          Install packages, copy configs, and run setup scripts",
-     "add            Search for and add packages to configuration files",
-     "configedit, ce Edit configuration files with your preferred editor",
-     "dotedit, de    Edit dotfiles with your preferred editor",
-     "dry-run, dr    Preview what would be done without making changes",
-     "upgrade, up    Upgrade all packages to latest versions",
-     "uninstall      Remove all managed packages and configs",
-     "gendb          Generate VCS database for development packages",
-     "help, --help   Show this help message",
-     "version, -v    Show version information"
-   ], { indent: true, color: (s: string) => `\x1b[34m${s}\x1b[0m` });
+    console.log("\x1b[1mCommands:\x1b[0m");
+    ui.list([
+      "apply          Install packages, copy configs, and run setup scripts",
+      "dots           Check and sync only dotfiles configurations",
+      "add            Search for and add packages to configuration files",
+      "configedit, ce Edit configuration files with your preferred editor",
+      "dotedit, de    Edit dotfiles with your preferred editor",
+      "dry-run, dr    Preview what would be done without making changes",
+      "upgrade, up    Upgrade all packages to latest versions",
+      "uninstall      Remove all managed packages and configs",
+      "gendb          Generate VCS database for development packages",
+      "help, --help   Show this help message",
+      "version, -v    Show version information"
+    ], { indent: true, color: (s: string) => `\x1b[34m${s}\x1b[0m` });
 
   console.log("\x1b[1m\nOptions:\x1b[0m");
   ui.list([
@@ -122,6 +125,10 @@ export async function main() {
       await timeOperation("upgrade", () => handleUpgradeCommand(options));
     } else if (isUninstallCommand(command)) {
       await timeOperation("uninstall", () => handleUninstallCommand(options));
+    } else if (isDotsCommand(command)) {
+      // Check for --dry-run flag in remaining args
+      const dryRun = remainingArgs.includes('--dry-run');
+      await timeOperation("dots", () => handleDotsCommand(dryRun, options));
     } else if (isAddCommand(command)) {
       // Extract search terms from remaining arguments (options are already parsed)
       const searchTerms = remainingArgs.filter(arg => !arg.startsWith('--'));

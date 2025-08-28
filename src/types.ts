@@ -124,14 +124,31 @@ export interface AURBudget {
 export type ProgressCallback = (message: string) => void;
 
 // Add command specific types
-export interface AddCommandOptions extends CommandOptions {
+export interface AddCommandOptions {
+  noSpinner: boolean;
+  verbose: boolean;
+  debug: boolean;
+  devel: boolean;
+  useLibALPM: boolean;
+  bypassCache: boolean;
   exact?: string;
   file?: string;
   source?: "repo" | "aur" | "any";
   yes?: boolean;
   json?: boolean;
   all?: boolean;
+  dryRun?: boolean;
+  aur?: boolean;
+  repo?: boolean;
+  limit?: number;
+  asdeps?: boolean;
+  asexplicit?: boolean;
+  noconfirm?: boolean;
+  needed?: boolean;
+  timeupdate?: boolean;
+  foreign?: boolean;
+  explicit?: boolean;
+  deps?: boolean;
+  unrequired?: boolean;
 }
 
-// Re-export SearchResult for backward compatibility
-export { SearchResult };

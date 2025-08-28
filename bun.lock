@@ -10,7 +10,7 @@
         "@types/bun": "^1.2.20",
       },
       "peerDependencies": {
-        "typescript": "^5",
+        "typescript": "^5.9.2",
       },
     },
   },

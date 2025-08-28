@@ -77,11 +77,19 @@ function saveManagedLock(lock: ManagedLock): void {
 async function getInstalledVersion(packageName: string): Promise<string | undefined> {
   try {
     const manager = getPacmanManager();
+
+    // First check if it's an individual package
     if (await manager.isPackageInstalled(packageName)) {
       const output = await $`pacman -Q ${packageName}`.text();
       const match = output.match(new RegExp(`${packageName}\\s+([\\S]+)`));
       return match ? match[1] : undefined;
     }
+
+    // If not an individual package, check if it's a package group
+    if (await manager.isPackageGroupInstalled(packageName)) {
+      return "group"; // Return a special marker for installed package groups
+    }
+
     return undefined;
   } catch {
     return undefined;
@@ -123,6 +131,14 @@ async function getPackageInfo(packageName: string): Promise<PackageInfo> {
       const exactMatch = searchResults.find(r => r.name === packageName);
       if (exactMatch) {
         availableVersion = exactMatch.version;
+      } else {
+        // Check if it's a package group
+        try {
+          await $`pacman -Sg ${packageName}`.quiet();
+          availableVersion = "group";
+        } catch {
+          // Not a package group either
+        }
       }
     } catch {
       // Package not found
@@ -304,6 +320,26 @@ export async function removeUnmanagedPackages(packagesToRemove: string[], spinne
 export async function getManagedPackages(): Promise<string[]> {
   const managedLock = loadManagedLock();
   return Object.keys(managedLock.packages);
+}
+
+/**
+ * Compare two package versions to determine if the second is newer
+ */
+export async function isPackageNewer(installedVersion: string, availableVersion: string): Promise<boolean> {
+  try {
+    // Use pacman's version comparison
+    const result = await $`vercmp ${installedVersion} ${availableVersion}`.text();
+    const comparison = parseInt(result.trim(), 10);
+
+    // vercmp returns:
+    // < 0 if installedVersion < availableVersion (available is newer)
+    // = 0 if versions are equal
+    // > 0 if installedVersion > availableVersion
+    return comparison < 0;
+  } catch (error) {
+    // If vercmp fails, fall back to simple string comparison
+    return installedVersion !== availableVersion;
+  }
 }
 
 async function getPackagesToRemove(currentPackages: string[]): Promise<string[]> {

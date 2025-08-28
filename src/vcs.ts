@@ -4,7 +4,7 @@
  */
 
 import { $ } from "bun";
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { getHomeDirectory } from "./utils/fs";
 
@@ -16,6 +16,7 @@ export interface VCSInfo {
 
 export interface VCSStore {
   originsByPackage: Record<string, VCSInfo[]>;
+  cachePath: string;
 }
 
 /**
@@ -50,35 +51,53 @@ function getVCSCachePath(): string {
 }
 
 /**
- * Load VCS store from cache
+ * Create a new VCS store
  */
-export async function loadVCSStore(): Promise<VCSStore> {
+export async function newVCSStore(): Promise<VCSStore> {
   const cachePath = getVCSCachePath();
-  
+
+  // Ensure cache directory exists
+  const cacheDir = join(cachePath, "..");
+  try {
+    mkdirSync(cacheDir, { recursive: true });
+  } catch (error) {
+    // Directory might already exist, that's fine
+  }
+
+  const store: VCSStore = {
+    originsByPackage: {},
+    cachePath
+  };
+
+  // Load existing cache
   try {
     if (existsSync(cachePath)) {
       const content = readFileSync(cachePath, "utf8");
-      return JSON.parse(content);
+      const parsed = JSON.parse(content);
+      store.originsByPackage = parsed.originsByPackage || {};
     }
   } catch (error) {
     // If cache is corrupted, start fresh
   }
-  
-  return { originsByPackage: {} };
+
+  return store;
+}
+
+/**
+ * Load VCS store from cache
+ */
+export async function loadVCSStore(): Promise<VCSStore> {
+  return newVCSStore();
 }
 
 /**
  * Save VCS store to cache
  */
 export async function saveVCSStore(store: VCSStore): Promise<void> {
-  const cachePath = getVCSCachePath();
-  
-  // Ensure cache directory exists
-  const cacheDir = join(cachePath, "..");
-  await $`mkdir -p ${cacheDir}`.quiet();
-  
-  const content = JSON.stringify(store, null, 2);
-  writeFileSync(cachePath, content, "utf8");
+  const content = JSON.stringify({
+    originsByPackage: store.originsByPackage
+  }, null, 2);
+  writeFileSync(store.cachePath, content, "utf8");
 }
 
 /**
@@ -368,19 +387,32 @@ async function getCurrentCommit(info: VCSInfo): Promise<string> {
 }
 
 /**
+ * Clean orphans removes VCS info for packages that are no longer installed
+ */
+export async function cleanOrphans(store: VCSStore, installedPackages: string[]): Promise<void> {
+  const installedSet = new Set(installedPackages);
+
+  for (const packageName of Object.keys(store.originsByPackage)) {
+    if (!installedSet.has(packageName)) {
+      delete store.originsByPackage[packageName];
+    }
+  }
+}
+
+/**
  * Initialize VCS info for packages that don't have it yet (gendb functionality)
  */
 export async function initializeVCSPackages(vcsPackages: string[]): Promise<number> {
   const store = await loadVCSStore();
   let generatedCount = 0;
-  
+
   for (const packageName of vcsPackages) {
     if (isVCSPackage(packageName)) {
       // Skip if we already have VCS info for this package
       if (store.originsByPackage[packageName]) {
         continue;
       }
-      
+
       try {
         await updateVCSInfo(packageName, store);
         generatedCount++;
@@ -390,6 +422,7 @@ export async function initializeVCSPackages(vcsPackages: string[]): Promise<numb
       }
     }
   }
-  
+
+  await saveVCSStore(store);
   return generatedCount;
 }

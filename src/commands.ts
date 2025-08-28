@@ -6,6 +6,7 @@ export const COMMANDS = [
   "apply",
   "dry-run",
   "dr",
+  "dots",
   "upgrade",
   "up",
   "uninstall",
@@ -203,6 +204,13 @@ export function isUpgradeCommand(command: Command): boolean {
  */
 export function isDryRunCommand(command: Command): boolean {
   return command === "dry-run" || command === "dr";
+}
+
+/**
+ * Check if command is a dots command
+ */
+export function isDotsCommand(command: Command): boolean {
+  return command === "dots";
 }
 
 /**

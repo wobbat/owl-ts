@@ -131,12 +131,56 @@ export const ui = {
     console.log();
   },
 
-  celebration: (text: string) => {
-    console.log();
-    console.log(styles.success(text));
-    console.log();
-  }
-};
+   celebration: (text: string) => {
+     console.log();
+     console.log(styles.success(text));
+     console.log();
+   },
+
+    showSystemMaintenance: () => {
+      console.log("Performing system maintenance!");
+    },
+
+    showPackagesToUpgrade: (packages: string[]) => {
+      console.log("Packages to upgrade:");
+      for (const pkg of packages) {
+        console.log(`  ${icon.upgrade} ${styles.accent(pkg)}`);
+      }
+      console.log();
+    },
+
+    showAllPackagesUpgraded: () => {
+      console.log(`  ${icon.ok} All packages upgraded to latest versions`);
+    },
+
+    showPackageCleanup: (toRemove: Array<{name: string}>) => {
+      console.log("Package cleanup (removing conflicting packages):");
+      for (const pkg of toRemove) {
+        console.log(`  ${icon.remove} Removing: ${styles.accent(pkg.name)}`);
+      }
+    },
+
+    showRemovalWarning: (err: Error) => {
+      console.log(`  ${icon.warn} Warning: Failed to update managed packages state: ${err.message}`);
+    },
+
+    showPackagesRemoved: (count: number) => {
+      console.log(`  ${icon.ok} Removed ${count} packages`);
+      console.log();
+    },
+
+    systemMessage: (text: string) => {
+      console.log(`${styles.success("::")} ${styles.accent(text)} ${styles.success("::")}`);
+    },
+
+    errorMessage: (text: string) => {
+      console.error(`${styles.error("::")} ${styles.accent(text)} ${styles.error("::")}`);
+    },
+
+    aurDownMessage: () => {
+      console.log(`${styles.error("::")} ${styles.accent("AUR DOWN")} ${styles.error("::")}`);
+    }
+ };
 
 export function spinner(text: string, options: SpinnerOptions = {}) {
   const enabled = options.enabled !== false;

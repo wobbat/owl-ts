@@ -44,11 +44,16 @@ export class AURClient {
     const url = `https://aur.archlinux.org/rpc/?v=5&type=info&arg[]=${encodeURIComponent(packageName)}`;
     const response = await this.makeRequest(url);
 
-    if (response.resultcount === 0) {
+    if (response.resultcount === 0 || !response.results || response.results.length === 0) {
       throw new Error(`Package ${packageName} not found in AUR`);
     }
 
-    return response.results[0];
+    const result = response.results[0];
+    if (!result) {
+      throw new Error(`Package ${packageName} not found in AUR`);
+    }
+
+    return result;
   }
 
   /**

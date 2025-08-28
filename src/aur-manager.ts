@@ -3,7 +3,7 @@
  */
 
 import { $ } from "bun";
-import { join } from "node:path";
+
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { AURClient } from "./aur-client";
 import type { AURPackage, SearchResult, ProgressCallback } from "./types";
@@ -15,11 +15,8 @@ export interface AURManagerOptions {
 
 export class AURManager {
   private aurClient: AURClient;
-  private enableDevel: boolean;
-
   constructor(options: AURManagerOptions = {}) {
     this.aurClient = new AURClient({ bypassCache: options.bypassCache });
-    this.enableDevel = options.enableDevel ?? false;
   }
 
   /**
@@ -27,6 +24,13 @@ export class AURManager {
    */
   async installPackage(packageName: string, verbose = false): Promise<void> {
     return this.installPackageWithProgress(packageName, verbose, null);
+  }
+
+  /**
+   * Install or upgrade a package (bypasses "already installed" check)
+   */
+  async installOrUpgradePackage(packageName: string, verbose = false): Promise<void> {
+    return this.installOrUpgradePackageWithProgress(packageName, verbose, null);
   }
 
   /**
@@ -47,6 +51,65 @@ export class AURManager {
 
     return this.installOrUpgradePackageWithProgress(packageName, verbose, progressCallback);
   }
+
+  /**
+   * Install or upgrade a package with inline spinner progress reporting
+   */
+  async installOrUpgradePackageWithProgress(
+     packageName: string,
+     verbose = false,
+     progressCallback: ProgressCallback | null
+   ): Promise<void> {
+     // Query AUR for package info (don't show this step to keep it clean)
+     await this.aurClient.queryPackage(packageName);
+
+     // Create temporary directory for building
+     const tmpDir = `/tmp/aur-${packageName}`;
+
+     try {
+       // Clean up any existing temp directory
+       if (existsSync(tmpDir)) {
+         rmSync(tmpDir, { recursive: true, force: true });
+       }
+
+       mkdirSync(tmpDir, { recursive: true });
+
+       if (progressCallback) {
+         progressCallback(`Cloning ${packageName} repository`);
+       }
+
+       // Clone AUR repository
+       const gitUrl = `https://aur.archlinux.org/${packageName}.git`;
+       await $`git clone ${gitUrl} ${tmpDir}`.quiet();
+
+       if (progressCallback) {
+         progressCallback(`Building ${packageName} from AUR`);
+       }
+
+       // Build and install package
+       const makepkgCmd = $`makepkg -si --rmdeps --noconfirm`.cwd(tmpDir);
+
+       if (verbose) {
+         await makepkgCmd;
+       } else {
+         await makepkgCmd.quiet();
+       }
+
+       if (progressCallback) {
+         progressCallback(`Successfully installed ${packageName}`);
+       }
+
+     } finally {
+       // Clean up temporary directory
+       try {
+         if (existsSync(tmpDir)) {
+           rmSync(tmpDir, { recursive: true, force: true });
+         }
+       } catch {
+         // Ignore cleanup errors
+       }
+     }
+   }
 
   /**
    * Install multiple AUR packages
@@ -183,7 +246,7 @@ export class AURManager {
       for (const line of output.split('\n')) {
         if (line.trim()) {
           const parts = line.split(/\s+/);
-          if (parts.length > 0) {
+          if (parts.length > 0 && parts[0]) {
             packages.push(parts[0]);
           }
         }
@@ -229,9 +292,18 @@ export class AURManager {
         const versionOutput = await $`pacman -Q ${pkgName}`.text();
         const installedVersion = versionOutput.split(/\s+/)[1];
 
-        // Compare versions (simple string comparison for now)
-        if (installedVersion !== aurPkg.Version) {
-          outdated.push(pkgName);
+        // Compare versions using pacman's vercmp
+        try {
+          const result = await $`vercmp ${installedVersion} ${aurPkg.Version}`.text();
+          const comparison = parseInt(result.trim(), 10);
+          if (comparison < 0) {
+            outdated.push(pkgName);
+          }
+        } catch {
+          // Fall back to string comparison if vercmp fails
+          if (installedVersion !== aurPkg.Version) {
+            outdated.push(pkgName);
+          }
         }
       } catch {
         // Skip if we can't get version
@@ -254,101 +326,15 @@ export class AURManager {
     }
   }
 
-  /**
-   * Install or upgrade a package (internal method)
-   */
-  private async installOrUpgradePackageWithProgress(
-    packageName: string,
-    verbose = false,
-    progressCallback: ProgressCallback | null
-  ): Promise<void> {
-    if (progressCallback) {
-      progressCallback(`Querying AUR for ${packageName}`);
-    }
 
-    // Query AUR for package info
-    const aurPkg = await this.aurClient.queryPackage(packageName);
 
-    if (progressCallback) {
-      progressCallback(`Found ${packageName} in AUR (v${aurPkg.Version})`);
-    }
 
-    // Create temporary directory for building
-    if (progressCallback) {
-      progressCallback(`Preparing build environment for ${packageName}`);
-    }
-
-    const tmpDir = `/tmp/aur-${packageName}`;
-
-    try {
-      // Clean up any existing temp directory
-      if (existsSync(tmpDir)) {
-        rmSync(tmpDir, { recursive: true, force: true });
-      }
-
-      mkdirSync(tmpDir, { recursive: true });
-
-      if (progressCallback) {
-        progressCallback(`Cloning ${packageName} repository`);
-      }
-
-      // Clone AUR repository
-      const gitUrl = `https://aur.archlinux.org/${packageName}.git`;
-      await this.monitorGitCloneProgress(
-        $`git clone ${gitUrl} ${tmpDir}`.quiet(),
-        packageName,
-        progressCallback
-      );
-
-      if (progressCallback) {
-        progressCallback(`Building ${packageName} package`);
-      }
-
-      // Build and install package
-      const makepkgCmd = $`makepkg -si --rmdeps --noconfirm`.cwd(tmpDir);
-
-      if (verbose) {
-        makepkgCmd.stdout('inherit');
-        makepkgCmd.stderr('inherit');
-        await makepkgCmd;
-      } else {
-        await makepkgCmd.quiet();
-      }
-
-      if (progressCallback) {
-        progressCallback(`Successfully installed ${packageName} from AUR`);
-      }
-
-    } finally {
-      // Clean up temporary directory
-      try {
-        if (existsSync(tmpDir)) {
-          rmSync(tmpDir, { recursive: true, force: true });
-        }
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
-  }
 
   /**
-   * Monitor git clone progress
+   * Get the AUR client for direct access
    */
-  private async monitorGitCloneProgress(
-    cmd: Promise<any>,
-    packageName: string,
-    callback: ProgressCallback | null
-  ): Promise<void> {
-    if (!callback) {
-      await cmd;
-      return;
-    }
-
-    try {
-      await cmd;
-    } catch (error) {
-      throw new Error(`Failed to clone AUR repository: ${error instanceof Error ? error.message : String(error)}`);
-    }
+  getAURClient(): AURClient {
+    return this.aurClient;
   }
 
   /**

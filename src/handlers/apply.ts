@@ -20,64 +20,80 @@ import type { ConfigEntry, ConfigMapping, PackageAction } from "../types";
  * Supports both normal apply and dry-run modes
  */
 export async function handleApplyCommand(dryRun: boolean, options: CommandOptions): Promise<void> {
-   // Load and parse all configuration files for this host
-   const configResult = await safeExecute(
-     () => loadConfigForHost(hostname()),
-     "Failed to load configuration"
-   );
+    // Get hostname
+    const host = hostname();
 
-   const configEntries = configResult.entries;
-   const globalEnvs = configResult.globalEnvs;
+    // Load and parse all configuration files for this host
+    const configResult = await safeExecute(
+      () => loadConfigForHost(host),
+      "Failed to load configuration"
+    );
 
-   // Extract all packages, dotfile configs, setup scripts, services, and environment variables
-   const allPackages = configEntries.map(entry => entry.package);
-   const allDotfileConfigs = configEntries.flatMap(entry => entry.configs || []);
-   const allSetupScripts = configEntries.flatMap(entry => entry.setups || []);
-   const allServices = configEntries.flatMap(entry => entry.services || []);
-   const allEnvironmentVariables = configEntries.flatMap(entry => entry.envs || []);
+    // Extract all components from config
+    const configData = extractConfigData(configResult);
 
-   ui.header(dryRun ? "Dry run" : "Sync");
+    // Show header
+    ui.header(dryRun ? "Dry run" : "Sync");
 
-   // Check AUR status once at the beginning - always check as per Go version
-   const aurAvailable = await checkAURStatus();
-   if (!aurAvailable) {
-      ui.warn("AUR is currently unavailable. Continuing with system package updates only.");
-   }
+    // Check AUR status once at the beginning
+    const aurAvailable = await checkAURStatus();
+    if (!aurAvailable) {
+      // Show AUR down message once
+      ui.aurDownMessage();
+      ui.warn("Warning: AUR is currently unavailable. Continuing with system package updates only.");
+    }
 
-   // Remove duplicate packages
-   const uniquePackages = [...new Set(allPackages)];
+    // Process packages if any are configured
+    if (configData.packages.length > 0) {
+      await processPackages(configData.packages, configResult.entries, configData.dotfileConfigs, dryRun, options, aurAvailable);
+    }
 
-   // Process packages if any are configured
-   if (uniquePackages.length > 0) {
-     await processPackages(uniquePackages, configEntries, allDotfileConfigs, dryRun, options, aurAvailable);
-   }
+    // Process other configurations
+    await processConfigs(configData.dotfileConfigs, configResult.entries, dryRun);
+    await processSetupScripts(configData.setupScripts, dryRun);
+    await processServices(configData.services, dryRun);
+    await processEnvironmentVariables(configData.environmentVariables, dryRun, options.debug);
+    await processGlobalEnvironmentVariables(configResult.globalEnvs, dryRun, options.debug);
 
-   // Process dotfile configurations, setup scripts, services, and environment variables
-   await processConfigs(allDotfileConfigs, configEntries, dryRun);
-   await processSetupScripts(allSetupScripts, dryRun);
-   await processServices(allServices, dryRun);
-   await processEnvironmentVariables(allEnvironmentVariables, dryRun, options.debug);
-   await processGlobalEnvironmentVariables(globalEnvs, dryRun, options.debug);
+     // Show completion message
+     if (dryRun) {
+       ui.success("Dry run completed successfully - no changes made");
+     } else {
+       ui.systemMessage("System sync complete");
+     }
+ }
 
-   // Show completion message
-   if (dryRun) {
-     ui.success("Dry run completed successfully - no changes made");
-   } else {
-     ui.celebration(":: System sync complete ::");
-   }
+/**
+ * Extract configuration data from config result
+ */
+function extractConfigData(configResult: any): {
+  packages: string[];
+  dotfileConfigs: ConfigMapping[];
+  setupScripts: string[];
+  services: string[];
+  environmentVariables: Array<{ key: string; value: string }>;
+} {
+  const entries = configResult.entries as ConfigEntry[];
+  return {
+    packages: [...new Set(entries.map(entry => entry.package))],
+    dotfileConfigs: entries.flatMap(entry => entry.configs || []),
+    setupScripts: entries.flatMap(entry => entry.setups || []),
+    services: entries.flatMap(entry => entry.services || []),
+    environmentVariables: entries.flatMap(entry => entry.envs || [])
+  };
 }
 
 /**
  * Check AUR availability
  */
 async function checkAURStatus(): Promise<boolean> {
-   try {
-     const { refreshAURStatusAsync, getAURStatus } = await import("../aur-checker");
-     await refreshAURStatusAsync();
-     return getAURStatus();
-   } catch {
-     return false;
-   }
+    try {
+      const { refreshAURStatusAsync, getAURStatus } = await import("../aur-checker");
+      await refreshAURStatusAsync();
+      return getAURStatus();
+    } catch {
+      return false;
+    }
 }
 
 
