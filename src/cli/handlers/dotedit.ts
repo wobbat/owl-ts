@@ -35,7 +35,7 @@ export async function handleDotEditCommand(
     ui.info("No target specified, opening dotfiles directory");
   } else {
     // Load configuration to find dotfile mappings
-    const configResult = await loadConfigForHost(hostname(), options.legacyParser);
+    const configResult = await loadConfigForHost(hostname());
     const configEntries = configResult.entries;
 
     // Look for the target dotfile in configuration mappings

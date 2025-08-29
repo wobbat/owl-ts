@@ -1,13 +1,11 @@
 /**
- * AUR Client for querying Arch User Repository API with caching and rate limiting
+ * AUR Client for querying Arch User Repository API with simple in-memory cache and throttling
  */
 
-import { $ } from "bun";
 import { join } from "path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
-import { getHomeDirectory, ensureOwlDirectories } from "../../utils/fs";
 import { shouldSkipAUR, refreshAURStatusAsync } from "./status";
-import type { AURPackage, AURResponse, AURClientOptions, AURBudget } from "../../types";
+import type { AURPackage, AURResponse, AURClientOptions } from "../../types";
 
 interface CacheEntry {
   response: AURResponse;
@@ -15,26 +13,16 @@ interface CacheEntry {
   url: string;
 }
 
-interface DiskCacheEntry {
-  response: AURResponse;
-  timestamp: string;
-  url: string;
-}
-
 export class AURClient {
   private cache: Map<string, CacheEntry> = new Map();
   private lastRequest = new Date(0);
-  private budget: AURBudget;
   private options: Required<AURClientOptions>;
 
   constructor(options: AURClientOptions = {}) {
     this.options = {
       bypassCache: options.bypassCache ?? false,
-      cacheDir: options.cacheDir ?? join(getHomeDirectory(), '.owl', 'cache', 'aur')
+      cacheDir: options.cacheDir ?? join(process.env.HOME || '', '.owl', 'cache', 'aur')
     };
-
-    this.budget = this.initializeBudget();
-    this.ensureCacheDirectory();
   }
 
   /**
@@ -109,51 +97,23 @@ export class AURClient {
       }
     }
 
-    // Check rate limit
-    if (!this.options.bypassCache && !this.canMakeCall()) {
-      throw new Error(`AUR API daily budget exceeded (${this.budget.maxCalls} calls), results may be stale. Try again tomorrow or use cached data`);
-    }
-
     // Throttle requests
     await this.throttleRequest();
 
     try {
-      // Limited retries with exponential backoff and jitter
-      const maxAttempts = 4;
-      let attempt = 0;
-      let lastError: any = null;
+      const controller = new AbortController();
+      const headers = { 'User-Agent': 'owl/1.0', 'Accept': 'application/json' } as const;
+      const to = setTimeout(() => controller.abort(), 15000);
+      const response = await fetch(url, { headers, signal: controller.signal });
+      clearTimeout(to);
 
-      while (attempt < maxAttempts) {
-        try {
-          const controller = new AbortController();
-          const headers = { 'User-Agent': 'owl/1.0', 'Accept': 'application/json' } as const;
-          const to = setTimeout(() => controller.abort(), 15000);
-          const response = await fetch(url, { headers, signal: controller.signal });
-          clearTimeout(to);
-
-          if (response.status === 429 || response.status >= 500) {
-            throw new Error(`Transient AUR error: ${response.status}`);
-          }
-
-          if (!response.ok) {
-            throw new Error(`AUR API returned status ${response.status}`);
-          }
-
-          const data = await response.json() as AURResponse;
-          this.recordCall();
-          this.setCached(url, data);
-          return data;
-        } catch (e) {
-          lastError = e;
-          attempt++;
-          if (attempt >= maxAttempts) break;
-          // Backoff with jitter: base 400ms, grows exponentially
-          const delay = Math.floor((400 * 2 ** (attempt - 1)) * (0.7 + Math.random() * 0.6));
-          await new Promise(r => setTimeout(r, delay));
-          continue;
-        }
+      if (!response.ok) {
+        throw new Error(`AUR API returned status ${response.status}`);
       }
-      throw lastError || new Error('AUR request failed');
+
+      const data = await response.json() as AURResponse;
+      this.setCached(url, data);
+      return data;
     } catch (error) {
       // Avoid background refresh to prevent lingering network timers
       throw new Error(`Failed to query AUR: ${error instanceof Error ? error.message : String(error)}`);
@@ -187,24 +147,17 @@ export class AURClient {
    * Get cached response if available and not expired
    */
   private getCached(url: string): AURResponse | null {
-    // Check memory cache first
     const memoryCached = this.cache.get(url);
     if (memoryCached && this.isCacheValid(memoryCached.timestamp, url)) {
       return memoryCached.response;
     }
-
-    // Check disk cache
+    // Fallback to disk cache
     const diskCached = this.getDiskCached(url);
-    if (diskCached && this.isCacheValid(new Date(diskCached.timestamp), url)) {
-      // Update memory cache
-      this.cache.set(url, {
-        response: diskCached.response,
-        timestamp: new Date(diskCached.timestamp),
-        url
-      });
+    if (diskCached && this.isCacheValid(diskCached.timestamp, url)) {
+      // refresh memory cache
+      this.cache.set(url, { response: diskCached.response, timestamp: diskCached.timestamp, url });
       return diskCached.response;
     }
-
     return null;
   }
 
@@ -218,92 +171,68 @@ export class AURClient {
       url
     };
 
-    // Update memory cache
     this.cache.set(url, entry);
-
-    // Update disk cache
+    // Persist to disk to avoid re-querying across runs
     this.setDiskCached(url, response);
   }
 
   /**
    * Get cached response from disk
    */
-  private getDiskCached(url: string): CacheEntry | null {
-    try {
-      const cacheFile = this.getCacheFilePath(url);
-      if (!existsSync(cacheFile)) {
-        return null;
-      }
-
-      const data = readFileSync(cacheFile, 'utf8');
-      const entry = JSON.parse(data) as DiskCacheEntry;
-
-      return {
-        response: entry.response,
-        timestamp: new Date(entry.timestamp),
-        url: entry.url
-      };
-    } catch {
-      return null;
-    }
-  }
+  // Disk cache removed for simplicity
 
   /**
    * Set response in disk cache
    */
-  private setDiskCached(url: string, response: AURResponse): void {
-    try {
-      const entry: DiskCacheEntry = {
-        response,
-        timestamp: new Date().toISOString(),
-        url
-      };
-
-      const cacheFile = this.getCacheFilePath(url);
-      writeFileSync(cacheFile, JSON.stringify(entry, null, 2), 'utf8');
-    } catch {
-      // Silently fail cache write
-    }
-  }
+  // Disk cache removed for simplicity
 
   /**
    * Check if cache entry is still valid
    */
   private isCacheValid(timestamp: Date, url: string): boolean {
-    const maxAge = url.includes("type=search") ? 6 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000; // 6h for search, 24h for info
+    // Keep results fresh but reduce API pressure: 2h for search, 1h for info
+    const isSearch = url.includes("type=search");
+    const maxAge = isSearch ? 2 * 60 * 60 * 1000 : 60 * 60 * 1000;
     return Date.now() - timestamp.getTime() < maxAge;
   }
 
-  /**
-   * Get cache file path for URL
-   */
-  private getCacheFilePath(url: string): string {
-    const hash = this.hashString(url);
-    return join(this.options.cacheDir, `${hash.slice(0, 16)}.json`);
-  }
-
-  /**
-   * Simple string hash function
-   */
-  private hashString(str: string): string {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32bit integer
-    }
-    return Math.abs(hash).toString(16);
-  }
-
-  /**
-   * Ensure cache directory exists
-   */
-  private ensureCacheDirectory(): void {
+  // --- Minimal disk cache helpers ---
+  private getDiskCached(url: string): { response: AURResponse; timestamp: Date } | null {
     try {
-      mkdirSync(this.options.cacheDir, { recursive: true });
+      const file = this.getCacheFilePath(url);
+      if (!existsSync(file)) return null;
+      const raw = readFileSync(file, 'utf8');
+      const obj = JSON.parse(raw) as { response: AURResponse; timestamp: string };
+      return { response: obj.response, timestamp: new Date(obj.timestamp) };
     } catch {
-      // Silently fail
+      return null;
     }
+  }
+
+  private setDiskCached(url: string, response: AURResponse): void {
+    try {
+      this.ensureCacheDirectory();
+      const file = this.getCacheFilePath(url);
+      const payload = { response, timestamp: new Date().toISOString() };
+      writeFileSync(file, JSON.stringify(payload, null, 2), 'utf8');
+    } catch {
+      // best effort
+    }
+  }
+
+  private ensureCacheDirectory(): void {
+    try { mkdirSync(this.options.cacheDir, { recursive: true }); } catch {}
+  }
+
+  private getCacheFilePath(url: string): string {
+    const hash = this.hashString(url).slice(0, 16);
+    return join(this.options.cacheDir, `${hash}.json`);
+  }
+
+  private hashString(str: string): string {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) { h = ((h << 5) - h) + str.charCodeAt(i); h |= 0; }
+    return Math.abs(h).toString(16);
   }
 
   /**
@@ -320,90 +249,5 @@ export class AURClient {
     this.lastRequest = new Date();
   }
 
-  /**
-   * Check if we can make an API call within budget
-   */
-  private canMakeCall(): boolean {
-    this.refreshBudget();
-    return this.budget.usedCalls < this.budget.maxCalls;
-  }
-
-  /**
-   * Record an API call usage
-   */
-  private recordCall(): void {
-    if (this.options.bypassCache) return;
-
-    this.budget.usedCalls++;
-    this.saveBudget();
-  }
-
-  /**
-   * Initialize budget tracking
-   */
-  private initializeBudget(): AURBudget {
-    const budgetFile = join(this.options.cacheDir, 'budget.json');
-    const maxCalls = 500; // Default daily budget
-
-    try {
-      if (existsSync(budgetFile)) {
-        const data = readFileSync(budgetFile, 'utf8');
-        const budget = JSON.parse(data) as AURBudget;
-        budget.resetAt = new Date(budget.resetAt);
-        budget.budgetFile = budgetFile;
-        return budget;
-      }
-    } catch {
-      // Fall through to create new budget
-    }
-
-    const budget: AURBudget = {
-      resetAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // Tomorrow
-      usedCalls: 0,
-      maxCalls,
-      budgetFile
-    };
-
-    this.saveBudget();
-    return budget;
-  }
-
-  /**
-   * Refresh budget if needed
-   */
-  private refreshBudget(): void {
-    if (new Date() >= this.budget.resetAt) {
-      this.budget.resetAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-      this.budget.usedCalls = 0;
-      this.saveBudget();
-    }
-  }
-
-  /**
-   * Save budget to disk
-   */
-  private saveBudget(): void {
-    try {
-      writeFileSync(this.budget.budgetFile, JSON.stringify(this.budget, null, 2), 'utf8');
-    } catch {
-      // Silently fail
-    }
-  }
-
-  /**
-   * Get remaining API calls for today
-   */
-  getRemainingCalls(): number {
-    this.refreshBudget();
-    const remaining = this.budget.maxCalls - this.budget.usedCalls;
-    return Math.max(0, remaining);
-  }
-
-  /**
-   * Clean expired cache entries
-   */
-  cleanExpiredCache(): void {
-    // This would be implemented to clean old cache files
-    // For now, we'll rely on the TTL checks
-  }
+  // Budgeting removed; rely on TTL + throttle
 }

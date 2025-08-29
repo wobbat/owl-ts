@@ -1,10 +1,8 @@
 import { resolve, extname } from "path";
-import { $ } from "bun";
 import { ui, spinner, icon } from "../../ui";
 import { existsSync } from "fs";
 import { loadOwlLock, saveOwlLock, getFileHash } from "../../utils/lock";
 import { getHomeDirectory } from "../../utils/fs";
-import { runQuiet } from "../../utils/proc";
 
 interface SetupAction {
   script: string;
@@ -126,7 +124,12 @@ export async function runSetupScripts(scripts: string[]) {
       setupSpinner.update(`Executing ${action.script}...`);
       
       const { command, args } = getScriptExecutor(action.scriptPath);
-      await runQuiet(command, args, { timeoutMs: 120000 });
+      const proc = Bun.spawn([command, ...args], { stdout: 'pipe', stderr: 'pipe' });
+      const code = await proc.exited;
+      if (code !== 0) {
+        const stderr = await new Response(proc.stderr).text();
+        throw new Error(stderr || `Command failed: ${command}`);
+      }
       
       // Update the lock with the new hash
       const newHash = await getFileHash(action.scriptPath);
@@ -141,7 +144,7 @@ export async function runSetupScripts(scripts: string[]) {
   
   // Save the updated lock file
   if (successCount > 0) {
-    saveOwlLock(lock);
+    await saveOwlLock(lock);
   }
   
   if (errorCount === 0) {

@@ -11,6 +11,9 @@ interface ConfigAction {
   source: string;
   status: 'copy' | 'skip' | 'update' | 'conflict' | 'create';
   reason?: string;
+  // When true, we detected destination already matches source but lock was stale/missing
+  // and should be updated even if we don't copy
+  updateLock?: boolean;
 }
 
 // Limited concurrency helper
@@ -38,10 +41,20 @@ async function analyzeConfigs(configs: Record<string, string>): Promise<ConfigAc
     } else if (!existsSync(destinationPath)) {
       action = { destination, source, status: 'create', reason: 'Destination does not exist' };
     } else {
+      // Prefer state-based check; fallback to direct destination comparison
       const currentSourceHash = await getFileHash(sourcePath);
       const lastAppliedHash = (lock.configs as any)[destination];
-      if (currentSourceHash === lastAppliedHash && lastAppliedHash !== '') action = { destination, source, status: 'skip', reason: 'No changes detected' };
-      else action = { destination, source, status: 'update', reason: 'Changes detected or first time setup' };
+      if (currentSourceHash && lastAppliedHash === currentSourceHash) {
+        action = { destination, source, status: 'skip', reason: 'No changes detected' };
+      } else {
+        // Fallback: compare destination content directly
+        const destHash = await getFileHash(destinationPath);
+        if (destHash && destHash === currentSourceHash) {
+          action = { destination, source, status: 'skip', reason: 'Destination matches source', updateLock: true };
+        } else {
+          action = { destination, source, status: 'update', reason: 'Changes detected or first-time setup' };
+        }
+      }
     }
     actions.push(action);
   }
@@ -109,9 +122,21 @@ export async function syncDotfilesByPackage(
         }
       } else {
         const processSpinner = spinner(`  Dotfiles - syncing...`);
-        let successCount = 0; let errorCount = 0; const lock = await loadOwlLock();
+        let successCount = 0; let errorCount = 0; let lockUpdated = false; const lock = await loadOwlLock();
         for (const action of actions) {
-          if (action.status === 'skip' || action.status === 'conflict') continue;
+          if (action.status === 'conflict') continue;
+          if (action.status === 'skip') {
+            if (action.updateLock) {
+              try {
+                const newHash = await getFileHash(resolve(action.source));
+                (lock.configs as any)[action.destination] = newHash;
+                lockUpdated = true;
+              } catch {
+                // ignore lock update error on skip
+              }
+            }
+            continue;
+          }
           try {
             const home = getHomeDirectory();
             const destinationPath = action.destination.startsWith("~") ? join(home, action.destination.slice(1)) : resolve(action.destination);
@@ -129,7 +154,7 @@ export async function syncDotfilesByPackage(
             errorCount++;
           }
         }
-        if (successCount > 0) saveOwlLock(lock);
+        if (successCount > 0 || lockUpdated) await saveOwlLock(lock);
         if (errorCount === 0) processSpinner.stop(); else processSpinner.fail(`sync failed`);
       }
     }

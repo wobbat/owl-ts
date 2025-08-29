@@ -1,4 +1,4 @@
-import { runWithOutput, runQuiet } from "../../utils/proc";
+import { $ } from "bun";
 
 /**
  * Pacman query helpers
@@ -6,7 +6,7 @@ import { runWithOutput, runQuiet } from "../../utils/proc";
 
 export async function getInstalledPackages(): Promise<string[]> {
   try {
-    const output = await runWithOutput("pacman", ["-Qq"], { timeoutMs: 15000 });
+    const output = await $`pacman -Qq`.text();
     return output.split('\n').filter(Boolean);
   } catch (error) {
     throw new Error(`Pacman list failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -15,7 +15,7 @@ export async function getInstalledPackages(): Promise<string[]> {
 
 export async function isInstalled(packageName: string): Promise<boolean> {
   try {
-    await runQuiet("pacman", ["-Qq", packageName], { timeoutMs: 10000 });
+    await $`pacman -Qq ${packageName}`.quiet();
     return true;
   } catch {
     return false;
@@ -24,7 +24,7 @@ export async function isInstalled(packageName: string): Promise<boolean> {
 
 export async function isGroupInstalled(groupName: string): Promise<boolean> {
   try {
-    const output = await runWithOutput("pacman", ["-Sg", groupName], { timeoutMs: 15000 });
+    const output = await $`pacman -Sg ${groupName}`.text();
     const lines = output.trim().split('\n');
     const pkgs: string[] = [];
     for (const line of lines) {
@@ -46,7 +46,7 @@ export async function isGroupInstalled(groupName: string): Promise<boolean> {
 export async function getInstalledVersion(packageName: string): Promise<string | undefined> {
   try {
     if (await isInstalled(packageName)) {
-      const output = await runWithOutput("pacman", ["-Q", packageName], { timeoutMs: 10000 });
+      const output = await $`pacman -Q ${packageName}`.text();
       const match = output.match(new RegExp(`${packageName}\\s+([\\S]+)`));
       return match ? match[1] : undefined;
     }
@@ -61,7 +61,7 @@ export async function getInstalledVersion(packageName: string): Promise<string |
 
 export async function isPackageNewer(installedVersion: string, availableVersion: string): Promise<boolean> {
   try {
-    const result = await runWithOutput("vercmp", [installedVersion, availableVersion], { timeoutMs: 5000 });
+    const result = await $`vercmp ${installedVersion} ${availableVersion}`.text();
     const comparison = parseInt(result.trim(), 10);
     return comparison < 0;
   } catch {

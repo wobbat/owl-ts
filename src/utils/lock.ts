@@ -19,26 +19,37 @@ async function hashArrayBuffer(buf: ArrayBuffer | Uint8Array): Promise<string> {
 
 export async function getFileHash(filePath: string): Promise<string> {
   try {
-    // Use standard fs for now - Bun compatibility can be added later
     const { existsSync, lstatSync, readdirSync, readFileSync } = await import('fs');
     if (!existsSync(filePath)) return '';
     const stats = lstatSync(filePath);
-    if (stats.isDirectory()) {
-      const files = readdirSync(filePath, { withFileTypes: true });
-      const fileHashes: string[] = [];
-      for (const f of files) {
-        if (f.isFile()) {
-          const content = readFileSync(join(filePath, f.name));
-          const h = await hashArrayBuffer(content);
-          fileHashes.push(`${f.name}:${h}`);
-        }
-      }
-      fileHashes.sort();
-      return await hashArrayBuffer(new TextEncoder().encode(fileHashes.join('\n')));
+
+    // File: hash content directly
+    if (!stats.isDirectory()) {
+      const content = readFileSync(filePath);
+      return await hashArrayBuffer(content);
     }
 
-    const content = readFileSync(filePath);
-    return await hashArrayBuffer(content);
+    // Directory: recursively hash contents deterministically by relative path
+    const entries: string[] = [];
+    const stack: Array<{ abs: string; rel: string }> = [{ abs: filePath, rel: '' }];
+    while (stack.length) {
+      const { abs, rel } = stack.pop()!;
+      const list = readdirSync(abs, { withFileTypes: true });
+      for (const ent of list) {
+        const absChild = join(abs, ent.name);
+        const relChild = rel ? `${rel}/${ent.name}` : ent.name;
+        if (ent.isDirectory()) {
+          stack.push({ abs: absChild, rel: relChild });
+        } else if (ent.isFile()) {
+          const content = readFileSync(absChild);
+          const h = await hashArrayBuffer(content);
+          entries.push(`${relChild}:${h}`);
+        }
+        // Ignore other types (symlinks/sockets/etc.) for hashing purposes
+      }
+    }
+    entries.sort();
+    return await hashArrayBuffer(new TextEncoder().encode(entries.join('\n')));
   } catch {
     return '';
   }
@@ -64,7 +75,8 @@ export async function saveOwlLock(lock: OwlLock): Promise<void> {
   ensureOwlDirectories();
   const lockPath = join(OWL_STATE_DIR, 'owl.lock');
   const data = JSON.stringify(lock, null, 2);
-  await withFileLock(OWL_STATE_DIR, 'owl', async () => {
+  // Use a distinct advisory lock file name to avoid clobbering the data file
+  await withFileLock(OWL_STATE_DIR, 'owl-state', async () => {
     atomicWriteFile(lockPath, data);
   });
 }

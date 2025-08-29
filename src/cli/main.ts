@@ -50,7 +50,6 @@ function showHelp() {
     "--no-spinner   Disable loading animations",
     "--verbose      Show full command output instead of progress spinners",
     "--devel        Check VCS packages (-git, -hg, etc.) for updates (with upgrade)",
-    "--legacy-parser Use legacy config parser",
     "hide: --show-hidden       Print current hidden list (untracked)",
     "hide: --remove <pkg>      Remove package from hidden list"
   ], { indent: true, color: (s: string) => `\x1b[37m${s}\x1b[0m` });
@@ -102,7 +101,6 @@ export async function main() {
     // Command dispatch: use a switch for clarity and explicit alias grouping
     switch (command) {
       case "upgrade":
-      case "up":
         await timeOperation("upgrade", () => handleUpgradeCommand(options));
         break;
 
@@ -122,22 +120,19 @@ export async function main() {
         break;
       }
 
-      case "search":
-      case "s": {
+      case "search": {
         const searchTerms = remainingArgs.filter(arg => !arg.startsWith('--'));
         await timeOperation("search", () => handleSearchCommand(searchTerms, options));
         break;
       }
 
-      case "configedit":
-      case "ce": {
+      case "configedit": {
         const target = remainingArgs.find(arg => !arg.startsWith('--'));
         await timeOperation("configedit", () => handleConfigEditCommand(target, options));
         break;
       }
 
-      case "dotedit":
-      case "de": {
+      case "dotedit": {
         const target = remainingArgs.find(arg => !arg.startsWith('--'));
         await timeOperation("dotedit", () => handleDotEditCommand(target, options));
         break;
@@ -160,7 +155,6 @@ export async function main() {
         break;
 
       case "dry-run":
-      case "dr":
         await timeOperation("apply", () => handleApplyCommand(true, options));
         break;
 

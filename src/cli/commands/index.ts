@@ -11,9 +11,6 @@ export const COMMANDS = [
   "uninstall",
   "add",
   "search",
-  "install",
-  "info",
-  "query",
   "configedit",
   "dotedit",
   "gendb",
@@ -30,8 +27,6 @@ export interface CommandOptions {
   exact?: string; file?: string; source?: "repo" | "aur" | "any"; yes?: boolean; json?: boolean; all?: boolean; dryRun?: boolean;
   aur?: boolean; repo?: boolean; limit?: number; asdeps?: boolean; asexplicit?: boolean; noconfirm?: boolean; needed?: boolean;
   timeupdate?: boolean; foreign?: boolean; explicit?: boolean; deps?: boolean; unrequired?: boolean;
-  /** Use legacy non-AST config parser */
-  legacyParser?: boolean;
 }
 
 export interface ParsedCommand { command: Command; options: CommandOptions; args: string[]; }
@@ -46,9 +41,6 @@ const ALIASES: Record<string, Command> = {
   "d": "dots", "dots": "dots",
   "up": "upgrade", "upgrade": "upgrade",
   "s": "search", "search": "search",
-  "i": "install", "S": "install", "install": "install",
-  "Si": "info", "info": "info",
-  "q": "query", "Q": "query", "query": "query",
   "ce": "configedit", "configedit": "configedit",
   "de": "dotedit", "dotedit": "dotedit",
   "gendb": "gendb",
@@ -62,11 +54,14 @@ function getFlagValue(args: string[], key: string, consumed: Set<number>): strin
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (consumed.has(i)) continue;
-    if (a === key && i + 1 < args.length && !args[i + 1].startsWith('--')) {
-      consumed.add(i); consumed.add(i + 1);
-      return args[i + 1];
+    if (a === key) {
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith('--')) {
+        consumed.add(i); consumed.add(i + 1);
+        return next;
+      }
     }
-    if (a.startsWith(key + '=')) {
+    if (a !== undefined && a.startsWith(key + '=')) {
       consumed.add(i);
       return a.slice(key.length + 1);
     }
@@ -77,7 +72,8 @@ function getFlagValue(args: string[], key: string, consumed: Set<number>): strin
 function hasFlag(args: string[], key: string, consumed: Set<number>): boolean {
   for (let i = 0; i < args.length; i++) {
     if (consumed.has(i)) continue;
-    if (args[i] === key) { consumed.add(i); return true; }
+    const a = args[i];
+    if (a === key) { consumed.add(i); return true; }
   }
   return false;
 }
@@ -98,7 +94,6 @@ export function parseCommand(args: string[]): ParsedCommand {
     devel: hasFlag(rest, "--devel", consumed),
     useLibALPM: hasFlag(rest, "--alpm", consumed),
     bypassCache: hasFlag(rest, "--bypass-cache", consumed),
-    legacyParser: hasFlag(rest, "--legacy-parser", consumed),
   };
 
   // Common optional flags across commands (parsed generically)
@@ -140,15 +135,3 @@ export function parseCommand(args: string[]): ParsedCommand {
 
 export const isHelpCommand = (c: Command) => c === "help";
 export const isVersionCommand = (c: Command) => c === "version";
-export const isUpgradeCommand = (c: Command) => c === "upgrade";
-export const isDryRunCommand = (c: Command) => c === "dry-run";
-export const isDotsCommand = (c: Command) => c === "dots";
-export const isUninstallCommand = (c: Command) => c === "uninstall";
-export const isAddCommand = (c: Command) => c === "add";
-export const isConfigEditCommand = (c: Command) => c === "configedit";
-export const isDotEditCommand = (c: Command) => c === "dotedit";
-export const isSearchCommand = (c: Command) => c === "search";
-export const isInstallCommand = (c: Command) => c === "install";
-export const isInfoCommand = (c: Command) => c === "info";
-export const isQueryCommand = (c: Command) => c === "query";
-export const isGendbCommand = (c: Command) => c === "gendb";

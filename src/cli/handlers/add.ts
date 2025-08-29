@@ -218,7 +218,7 @@ async function addPackageToConfig(
 
   // Load current configuration
   const configResult = await safeExecute(
-    () => loadConfigForHost(hostname(), options.legacyParser),
+    () => loadConfigForHost(hostname()),
     "Failed to load configuration"
   );
 

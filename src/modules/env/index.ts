@@ -85,10 +85,13 @@ export async function setEnvironmentVariables(envs: EnvironmentVariable[], debug
     }
   }
 
-  // Write clean file (even if empty)
+  // Write clean files (bash and fish), even if empty
   await safeExecute(
-    async () => withFileLock(resolve(homedir(), ".owl"), 'env', async () => writeEnvironmentFileBash(envMap, debug)),
-    `Failed to write environment variables to ${ENV_FILE_SH}`
+    async () => withFileLock(resolve(homedir(), ".owl"), 'env', async () => {
+      writeEnvironmentFileBash(envMap, debug);
+      writeEnvironmentFileFish(envMap, debug);
+    }),
+    `Failed to write environment variables`
   );
 }
 

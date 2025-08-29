@@ -3,7 +3,6 @@
  */
 
 import { $ } from "bun";
-import { runWithOutput, runQuiet } from "../../utils/proc";
 
 import { existsSync, mkdirSync, rmSync } from "fs";
 import { AURClient } from "./client";
@@ -142,7 +141,7 @@ export class AURManager {
     }
 
     try {
-      await runQuiet("sudo", ["pacman", "-Rns", "--noconfirm", packageName], { timeoutMs: 300000 });
+      await $`sudo pacman -Rns --noconfirm ${packageName}`.quiet();
     } catch (error) {
       throw new Error(`Pacman remove failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -163,7 +162,7 @@ export class AURManager {
     progressCallback: ProgressCallback | null
   ): Promise<void> {
     // Get list of foreign (AUR) packages
-    const foreignPackages = await this.getInstalledPackages();
+      const foreignPackages = await this.getInstalledPackages();
 
     if (foreignPackages.length === 0) {
       if (verbose) {
@@ -271,7 +270,7 @@ export class AURManager {
    */
   async getInstalledPackages(): Promise<string[]> {
     try {
-      const output = await runWithOutput("pacman", ["-Qm"], { timeoutMs: 15000 });
+      const output = await $`pacman -Qm`.text();
       const packages: string[] = [];
 
       for (const line of output.split('\n')) {
@@ -320,13 +319,13 @@ export class AURManager {
 
       // Get installed version
       try {
-        const versionOutput = await runWithOutput("pacman", ["-Q", pkgName], { timeoutMs: 10000 });
+        const versionOutput = await $`pacman -Q ${pkgName}`.text();
         const installedVersion = (versionOutput.split(/\s+/)[1] || "");
         if (!installedVersion) { continue; }
 
         // Compare versions using pacman's vercmp
         try {
-          const result = await runWithOutput("vercmp", [installedVersion, aurPkg.Version], { timeoutMs: 5000 });
+          const result = await $`vercmp ${installedVersion} ${aurPkg.Version}`.text();
           const comparison = parseInt(result.trim(), 10);
           if (comparison < 0) {
             outdated.push(pkgName);

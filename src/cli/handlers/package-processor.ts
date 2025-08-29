@@ -8,12 +8,12 @@ import { hostname } from "os";
 import { safeExecute } from "../../utils/errors";
 import { updateManagedPackages, removeUnmanagedPackages, installPackages, planPackageActions } from "../../modules/packages";
 import { cleanupEnvironmentVariablesForRemovedPackages } from "./apply";
-import { 
-  isVCSPackage, 
-  loadVCSStore, 
-  saveVCSStore, 
-  getForeignPackages, 
-  filterVCSPackages, 
+import {
+  isVCSPackage,
+  loadVCSStore,
+  saveVCSStore,
+  getForeignPackages,
+  filterVCSPackages,
   checkVCSUpdate,
   updateVCSInfo
 } from "../../modules/vcs";
@@ -158,7 +158,7 @@ async function removePackages(toRemove: PackageAction[], configEntries: ConfigEn
         ui.showSystemMaintenance();
 
        if (!aurAvailable) {
-         console.log("Warning: AUR is currently unavailable. Skipping AUR package upgrades.");
+         //console.log("Warning: AUR is currently unavailable. Skipping AUR package upgrades.");
        }
 
        await safeExecute(async () => {

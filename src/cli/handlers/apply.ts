@@ -25,7 +25,7 @@ export async function handleApplyCommand(dryRun: boolean, options: CommandOption
 
     // Load and parse all configuration files for this host
     const configResult = await safeExecute(
-      () => loadConfigForHost(host, options.legacyParser),
+      () => loadConfigForHost(host),
       "Failed to load configuration"
     );
 
@@ -42,7 +42,7 @@ export async function handleApplyCommand(dryRun: boolean, options: CommandOption
       if (!aurAvailable) {
         // Show AUR down message once
         ui.aurDownMessage();
-        ui.warn("Warning: AUR is currently unavailable. Continuing with system package updates only.");
+        //ui.warn("Warning: AUR is currently unavailable. Continuing with system package updates only.");
       }
       await processPackages(configData.packages, configResult.entries, configData.dotfileConfigs, dryRun, options, aurAvailable);
     }

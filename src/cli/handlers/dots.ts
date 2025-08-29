@@ -18,7 +18,7 @@ import type { ConfigEntry } from "../../types";
 export async function handleDotsCommand(dryRun: boolean, options: CommandOptions): Promise<void> {
   // Load and parse all configuration files for this host
   const configResult = await safeExecute(
-    () => loadConfigForHost(hostname(), options.legacyParser),
+    () => loadConfigForHost(hostname()),
     "Failed to load configuration"
   );
 

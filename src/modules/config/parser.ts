@@ -4,22 +4,11 @@ import { readFile } from "fs/promises";
 import { homedir } from "os";
 import { resolve } from "path";
 import type { ConfigEntry, ServiceSpec } from "../../types";
+import { ConfigError } from "../../utils/errors";
 
 type SourceType = 'main' | 'host' | 'group';
 
 type OwlConfigEntry = ConfigEntry;
-
-class ConfigParseError extends Error {
-  constructor(
-    public filePath: string,
-    public lineNumber: number,
-    public line: string,
-    message: string
-  ) {
-    super(`${filePath}:${lineNumber}: ${message}\n  → ${line.trim()}`);
-    this.name = 'ConfigParseError';
-  }
-}
 
 // Lexer
 type TokenType =
@@ -88,7 +77,7 @@ type Node =
   | { kind: 'GlobalScript'; script: string; line: number; file: string };
 
 function assert(condition: any, file: string, line: number, raw: string, message: string): asserts condition {
-  if (!condition) throw new ConfigParseError(file, line, raw, message);
+  if (!condition) throw new ConfigError(file, line, raw, message);
 }
 
 function parseTokens(tokens: Token[]): Node {
@@ -112,7 +101,7 @@ function parseTokens(tokens: Token[]): Node {
           break;
         }
         // fallthrough to error below
-        throw new ConfigParseError(t.file, t.line, t.raw, `Unrecognized line: "${t.value}"`);
+        throw new ConfigError(t.file, t.line, t.raw, `Unrecognized line: "${t.value}"`);
       case 'AT_PACKAGE':
         inPackages = false;
         assert((t.value || '').trim().length > 0, t.file, t.line, t.raw, 'Package name cannot be empty');
@@ -202,7 +191,7 @@ function parseTokens(tokens: Token[]): Node {
         break;
       }
       default:
-        throw new ConfigParseError(t.file, t.line, t.raw, `Unexpected token: ${t.type}`);
+        throw new ConfigError(t.file, t.line, t.raw, `Unexpected token: ${t.type}`);
     }
   }
   return program;
@@ -249,12 +238,12 @@ function transformToEntries(ast: Node, ctx: { sourcePath: string; sourceType: So
       case 'GroupInclude': {
         const name = node.name;
         if (ctx.visited.has(name)) {
-          throw new ConfigParseError(resolve(OWL_ROOT, 'groups', `${name}.owl`), node.line, `@group ${name}`, `Circular dependency detected for group "${name}"`);
+          throw new ConfigError(resolve(OWL_ROOT, 'groups', `${name}.owl`), node.line, `@group ${name}`, `Circular dependency detected for group "${name}"`);
         }
         ctx.visited.add(name);
         const groupPath = resolve(OWL_ROOT, 'groups', `${name}.owl`);
         if (!existsSync(groupPath)) {
-          throw new ConfigParseError(groupPath, node.line, `@group ${name}`, `Group file not found: ${groupPath}`);
+          throw new ConfigError(groupPath, node.line, `@group ${name}`, `Group file not found: ${groupPath}`);
         }
         const raw = readFileSync(groupPath, 'utf8');
         const toks = lex(raw, groupPath);
@@ -275,19 +264,19 @@ function transformToEntries(ast: Node, ctx: { sourcePath: string; sourceType: So
         globalScripts.push(node.script);
         break;
       case 'PkgConfig': {
-        if (!currentPkg) throw new ConfigParseError(ast.file, node.line, ':config', 'Package context required before :config');
+        if (!currentPkg) throw new ConfigError(ast.file, node.line, ':config', 'Package context required before :config');
         const home = process.env.HOME || homedir();
         const owlDotfilesPath = resolve(home, '.owl', 'dotfiles', node.src);
         ensureEntry(currentPkg).configs.push({ source: owlDotfilesPath, destination: node.dest });
         break;
       }
       case 'PkgEnv': {
-        if (!currentPkg) throw new ConfigParseError(ast.file, node.line, ':env', 'Package context required before :env');
+        if (!currentPkg) throw new ConfigError(ast.file, node.line, ':env', 'Package context required before :env');
         ensureEntry(currentPkg).envs!.push({ key: node.key, value: node.value });
         break;
       }
       case 'PkgService': {
-        if (!currentPkg) throw new ConfigParseError(ast.file, (node as any).line, ':service', 'Package context required before :service');
+        if (!currentPkg) throw new ConfigError(ast.file, (node as any).line, ':service', 'Package context required before :service');
         const props = (node as any).props || {};
         const scope = props.scope === 'user' ? 'user' : 'system';
         const svc: ServiceSpec = {
@@ -304,7 +293,7 @@ function transformToEntries(ast: Node, ctx: { sourcePath: string; sourceType: So
         break;
       }
       case 'PkgScript': {
-        if (!currentPkg) throw new ConfigParseError(ast.file, (node as any).line, ':script', 'Package context required before :script');
+        if (!currentPkg) throw new ConfigError(ast.file, (node as any).line, ':script', 'Package context required before :script');
         ensureEntry(currentPkg).setups.push((node as any).script);
         break;
       }
@@ -317,7 +306,7 @@ function transformToEntries(ast: Node, ctx: { sourcePath: string; sourceType: So
 export async function loadConfigForHost(hostname: string): Promise<{ entries: OwlConfigEntry[], globalEnvs: Array<{ key: string; value: string }>, globalScripts: string[] }> {
   const OWL_ROOT = resolve(homedir(), ".owl");
   const globalPath = resolve(OWL_ROOT, "main.owl");
-  if (!existsSync(globalPath)) throw new ConfigParseError(globalPath, 0, '', `Global config file not found: ${globalPath}`);
+  if (!existsSync(globalPath)) throw new ConfigError(globalPath, 0, '', `Global config file not found: ${globalPath}`);
 
   const visited = new Set<string>();
   const globalRaw = await readFile(globalPath, 'utf8');

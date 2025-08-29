@@ -3,7 +3,6 @@
  */
 
 import { $ } from "bun";
-import { runWithOutput, runQuiet } from "../../utils/proc";
 import { AURManager } from "../aur/manager";
 import type { SearchResult, ProgressCallback } from "../../types";
 import { getInstalledPackages as qGetInstalledPackages, isInstalled as qIsInstalled, isGroupInstalled as qIsGroupInstalled } from "./query";
@@ -52,13 +51,13 @@ export class PacmanManager {
 
     try {
       // Check if package exists in official repositories (individual package)
-      await runQuiet("pacman", ["-Si", packageName], { timeoutMs: 15000 });
+      await $`pacman -Si ${packageName}`.quiet();
 
       // Package exists in official repos, install with pacman
       if (verbose) {
-        await runQuiet("sudo", ["pacman", "-S", "--noconfirm", packageName], { timeoutMs: 300000 });
+        await $`sudo pacman -S --noconfirm ${packageName}`.quiet();
       } else {
-        await runQuiet("sudo", ["pacman", "-S", "--noconfirm", packageName], { timeoutMs: 300000 });
+        await $`sudo pacman -S --noconfirm ${packageName}`.quiet();
       }
 
       if (verbose) {
@@ -72,7 +71,7 @@ export class PacmanManager {
     } catch {
       // Package not found as individual package, check if it's a package group
       try {
-        await runQuiet("pacman", ["-Sg", packageName], { timeoutMs: 15000 });
+        await $`pacman -Sg ${packageName}`.quiet();
 
         // Check if package group is already installed
         if (await qIsGroupInstalled(packageName)) {
@@ -85,9 +84,9 @@ export class PacmanManager {
         // Package group exists in official repos, install with pacman
         if (verbose) {
           console.log(`Installing package group ${packageName} from official repositories...`);
-          await runQuiet("sudo", ["pacman", "-S", "--noconfirm", packageName], { timeoutMs: 300000 });
+          await $`sudo pacman -S --noconfirm ${packageName}`.quiet();
         } else {
-          await runQuiet("sudo", ["pacman", "-S", "--noconfirm", packageName], { timeoutMs: 300000 });
+          await $`sudo pacman -S --noconfirm ${packageName}`.quiet();
         }
 
         if (verbose) {
@@ -135,7 +134,7 @@ export class PacmanManager {
       }
 
       try {
-        await runQuiet("sudo", ["pacman", "-S", "--noconfirm", ...repoPackages], { timeoutMs: 300000 });
+        await $`sudo pacman -S --noconfirm ${repoPackages}`.quiet();
       } catch (error) {
         throw new Error(`Pacman install failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -161,7 +160,7 @@ export class PacmanManager {
     }
 
     try {
-      await runQuiet("sudo", ["pacman", "-Rns", "--noconfirm", packageName], { timeoutMs: 300000 });
+      await $`sudo pacman -Rns --noconfirm ${packageName}`.quiet();
     } catch (error) {
       throw new Error(`Pacman remove failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -188,7 +187,7 @@ export class PacmanManager {
 
     try {
       if (verbose) console.log("Upgrading official repository packages...");
-      await runQuiet("sudo", ["pacman", "-Syu", "--noconfirm"], { timeoutMs: 600000 });
+      await $`sudo pacman -Syu --noconfirm`.quiet();
     } catch (error) {
       throw new Error(`Pacman upgrade failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -220,7 +219,7 @@ export class PacmanManager {
    */
   async getOutdatedPackages(): Promise<string[]> {
     try {
-      const output = await runWithOutput("pacman", ["-Qu"], { timeoutMs: 15000 });
+      const output = await $`pacman -Qu`.text();
       const outdated: string[] = [];
 
       for (const line of output.split('\n')) {
@@ -247,7 +246,7 @@ export class PacmanManager {
 
     // Search official repositories with pacman
     try {
-      const pacmanOutput = await runWithOutput("pacman", ["-Ss", searchTerm], { timeoutMs: 30000 });
+      const pacmanOutput = await $`pacman -Ss ${searchTerm}`.text();
       const pacmanResults = this.parsePacmanSearchOutput(pacmanOutput);
       results.push(...pacmanResults);
     } catch {
@@ -256,7 +255,7 @@ export class PacmanManager {
 
     // Also check if the search term is a package group
     try {
-      const groupOutput = await runWithOutput("pacman", ["-Sg", searchTerm], { timeoutMs: 15000 });
+      const groupOutput = await $`pacman -Sg ${searchTerm}`.text();
       if (groupOutput.trim()) {
         // If it's a package group, add it as a result
         results.unshift({
@@ -293,100 +292,41 @@ export class PacmanManager {
   }
 
   /**
-   * Sort search results to match yay's ordering algorithm
+   * Simple, maintainable search sorting:
+   * - Exact match > startsWith > contains
+   * - Official repos before AUR
+   * - Installed before uninstalled
+   * - Then alphabetical
    */
   private sortSearchResults(results: SearchResult[], searchTerm: string): SearchResult[] {
-    const queryTerms = searchTerm.toLowerCase().split(/\s+/);
+    const terms = searchTerm.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    const primary = terms[0] || "";
+
+    const score = (pkg: SearchResult): number => {
+      const name = pkg.name.toLowerCase();
+      const desc = (pkg.description || "").toLowerCase();
+      let s = 0;
+      if (primary) {
+        if (name === primary) s += 100;
+        else if (name.startsWith(primary)) s += 80;
+        else if (name.includes(primary)) s += 40;
+        else if (desc.includes(primary)) s += 10;
+      }
+      if (terms.length > 1 && terms.every(t => name.includes(t) || desc.includes(t))) s += 20;
+      return s;
+    };
 
     return results.sort((a, b) => {
-      // Helper function to calculate relevance score
-      const getRelevanceScore = (pkg: SearchResult): number => {
-        const name = pkg.name.toLowerCase();
-        const desc = pkg.description?.toLowerCase() || "";
+      const sa = score(a);
+      const sb = score(b);
+      if (sa !== sb) return sb - sa;
 
-        let score = 0;
-
-        // For compound searches (multiple terms)
-        if (queryTerms.length > 1) {
-          // Count how many search terms are matched
-          let matches = 0;
-          for (const term of queryTerms) {
-            if (name.includes(term) || desc.includes(term)) {
-              matches++;
-            }
-          }
-
-          // Base score on percentage of terms matched
-          const matchRatio = matches / queryTerms.length;
-          if (matchRatio === 1.0) score += 120; // All terms matched
-          else if (matchRatio >= 0.5) score += 80; // At least half matched
-          else if (matches > 0) score += 40; // Some terms matched
-
-          // Bonus for exact compound matches (like "neovim-git" for "neovim git")
-          const compoundName = queryTerms.join('-');
-          if (name.includes(compoundName)) score += 50;
-
-          const compoundNameUnderscore = queryTerms.join('_');
-          if (name.includes(compoundNameUnderscore)) score += 50;
-        } else {
-          // Single term search
-          const query = queryTerms[0];
-          if (!query) return 0;
-
-          // Exact match gets highest score
-          if (name === query) return 100;
-
-          // Starts with query gets high score
-          if (name.startsWith(query)) return 90;
-
-          // Contains query as substring gets medium score
-          if (name.includes(query)) return 50;
-
-          // Fuzzy matching - contains all characters in order
-          let queryIndex = 0;
-          for (const char of name) {
-            if (char === query[queryIndex]) {
-              queryIndex++;
-              if (queryIndex === query.length) return 30;
-            }
-          }
-        }
-
-        return score;
-      };
-
-      const aScore = getRelevanceScore(a);
-      const bScore = getRelevanceScore(b);
-
-      // Higher relevance score comes first
-      if (aScore !== bScore) {
-        return bScore - aScore;
-      }
-
-      // Within same relevance level:
-
-      // 1. Official repositories come before AUR
       const aOfficial = a.repository !== "aur";
       const bOfficial = b.repository !== "aur";
-      if (aOfficial !== bOfficial) {
-        return aOfficial ? -1 : 1;
-      }
+      if (aOfficial !== bOfficial) return aOfficial ? -1 : 1;
 
-      // 2. Installed packages come before uninstalled
-      if (a.installed !== b.installed) {
-        return a.installed ? -1 : 1;
-      }
+      if (a.installed !== b.installed) return a.installed ? -1 : 1;
 
-      // 3. For AUR packages, sort by votes/popularity (if available)
-      if (a.repository === "aur" && b.repository === "aur") {
-        const aVotes = (a as any).votes || 0;
-        const bVotes = (b as any).votes || 0;
-        if (aVotes !== bVotes) {
-          return bVotes - aVotes; // Higher votes first
-        }
-      }
-
-      // 4. Finally, sort alphabetically
       return a.name.localeCompare(b.name);
     });
   }
@@ -502,7 +442,7 @@ export class PacmanManager {
 
       // Check if package exists in official repositories
       try {
-        await runQuiet("pacman", ["-Si", pkg], { timeoutMs: 15000 });
+        await $`pacman -Si ${pkg}`.quiet();
         repoPackages.push(pkg);
         if (verbose) {
           console.log(`  ${pkg} found in official repositories`);
@@ -510,7 +450,7 @@ export class PacmanManager {
       } catch {
         // Check if it's a package group
         try {
-          await runQuiet("pacman", ["-Sg", pkg], { timeoutMs: 15000 });
+          await $`pacman -Sg ${pkg}`.quiet();
           repoPackages.push(pkg);
           if (verbose) {
             console.log(`  ${pkg} is a package group in official repositories`);

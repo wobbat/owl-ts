@@ -13,7 +13,7 @@ import { getHomeDirectory, ensureOwlDirectories } from "../../utils/fs";
 import { atomicWriteFile } from "../../utils/atomic";
 import { loadConfigForHost } from "../../modules/config";
 import { hostname } from "os";
-import { runWithOutput } from "../../utils/proc";
+import { $ } from "bun";
 import type { CommandOptions } from "../commands";
 import { getRelevantConfigFilesForCurrentSystem } from "../../modules/config";
 
@@ -81,7 +81,7 @@ function loadUntracked(): string[] {
 
 // Get explicitly installed packages via pacman (-Qqe)
 async function getExplicitlyInstalled(): Promise<string[]> {
-  const output = await runWithOutput("pacman", ["-Qqe"], { timeoutMs: 15000 });
+  const output = await $`pacman -Qqe`.text();
   return output.split("\n").filter(Boolean);
 }
 

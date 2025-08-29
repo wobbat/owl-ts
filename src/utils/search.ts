@@ -5,33 +5,7 @@
 import { PacmanManager } from "../modules/pacman/manager";
 import type { SearchResult } from "../types";
 
-/**
- * Perform narrowing search (yay-style): search with first term, then filter by subsequent terms
- */
-export async function performNarrowingSearch(
-  manager: PacmanManager,
-  terms: string[],
-  source: "repo" | "aur" | "any"
-): Promise<SearchResult[]> {
-  if (terms.length === 0) return [];
-
-  // Search with the first term to get initial results
-  let results = await manager.searchPackages(terms[0] || "");
-
-  // Filter by source if specified
-  if (source === "repo") {
-    results = results.filter(r => r.repository !== "aur");
-  } else if (source === "aur") {
-    results = results.filter(r => r.repository === "aur");
-  }
-
-  // Apply narrowing with subsequent terms
-  for (const term of terms.slice(1)) {
-    results = filterResultsByTerm(results, term);
-  }
-
-  return results;
-}
+// Note: a previous "narrowing" search helper was removed as unused to reduce complexity.
 
 /**
  * Optimized search that batches installation checks to improve performance
