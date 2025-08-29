@@ -11,7 +11,7 @@ all: build
 build:
 	bun install
 	bun run typecheck
-	bun build index.ts --compile --outfile ./dist/owl
+	bun build index.ts --compile --minify --outfile ./dist/owl
 
 clean:
 	rm -rf dist

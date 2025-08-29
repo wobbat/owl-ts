@@ -532,7 +532,8 @@ async function installNewPackages(
    const { ensureServicesConfigured } = await import("../../modules/services");
    // Normalize legacy string[] to specs
    const specs = (services || []).map((s: any) => typeof s === 'string' ? ({ name: s, enable: true, start: true }) : s);
-   return ensureServicesConfigured(specs);
+   await ensureServicesConfigured(specs);
+   return;
   }
 
   async function manageEnvironmentVariables(envs: Array<{ key: string; value: string }>): Promise<void> {

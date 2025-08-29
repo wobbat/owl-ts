@@ -17,10 +17,11 @@ export const CONFIG_EXTENSIONS = ['.owl'] as const;
 // Setup script extensions
 export const SETUP_EXTENSIONS = ['.sh', '.js', '.ts'] as const;
 
-// Timing constants (in milliseconds) - optimized for better performance
+// Timing constants (in milliseconds)
+// Keep spinner animation, but remove any artificial UI delays to feel instant
 export const SPINNER_FRAME_INTERVAL = 80;
-export const PACKAGE_INSTALL_DELAY = 150;
-export const DOTFILES_INSTALL_DELAY = 100;
+export const PACKAGE_INSTALL_DELAY = 10;
+export const DOTFILES_INSTALL_DELAY = 10;
 
 // Exit codes
 export const EXIT_SUCCESS = 0;

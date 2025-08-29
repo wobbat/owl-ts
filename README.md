@@ -139,6 +139,7 @@ Deeper dive: see `agents.md` for architecture and extension points.
 - Ensure files referenced in `:config` and `:script` actually exist
 - Check `~/.owl/.state/` lock files for clues (hashes, managed packages)
 - AUR down? Owl will continue with system packages and warn once
+- Services (sudo): system service actions use `sudo` non‑interactively. If you see sudo/TTY errors, run `sudo -v` first to cache credentials, or configure passwordless sudo for `systemctl`. For user services, set `scope: 'user'` in `:service`.
 
 ## Contributing
 
@@ -150,4 +151,3 @@ bun run --watch index.ts
 ```
 
 Built with [Bun](https://bun.com).
-

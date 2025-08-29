@@ -78,6 +78,10 @@ export const ui = {
         // Using darker magenta #8c686a (color13) with white text
         badge = `\x1b[48;2;140;104;106m\x1b[38;2;255;255;255m ${section} \x1b[0m`;
         break;
+      case 'teal':
+        // Teal #4DB6AC with white text
+        badge = `\x1b[48;2;77;182;172m\x1b[38;2;255;255;255m ${section} \x1b[0m`;
+        break;
       case 'blue':
       default:
         // Using blue #68778c (color4) with white text

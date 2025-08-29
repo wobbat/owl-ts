@@ -2,8 +2,25 @@
  * Command definitions and parsing utilities for Owl package manager
  */
 
+// Canonical commands (no aliases here)
 export const COMMANDS = [
-  "apply","dry-run","dr","dots","upgrade","up","uninstall","add","search","s","install","i","S","info","Si","query","q","Q","configedit","ce","dotedit","de","gendb","track","hide","help","--help","-h","version","--version","-v"
+  "apply",
+  "dry-run",
+  "dots",
+  "upgrade",
+  "uninstall",
+  "add",
+  "search",
+  "install",
+  "info",
+  "query",
+  "configedit",
+  "dotedit",
+  "gendb",
+  "track",
+  "hide",
+  "help",
+  "version",
 ] as const;
 
 export type Command = typeof COMMANDS[number];
@@ -19,64 +36,119 @@ export interface CommandOptions {
 
 export interface ParsedCommand { command: Command; options: CommandOptions; args: string[]; }
 
-export function parseCommand(args: string[]): ParsedCommand {
-  const [cmd, ...restArgs] = args; const command = (cmd || "apply") as Command;
-  if (!COMMANDS.includes(command)) throw new Error(`Unknown command: ${command}`);
+// Aliases map to canonical command names
+const ALIASES: Record<string, Command> = {
+  // help/version aliases
+  "help": "help", "--help": "help", "-h": "help",
+  "version": "version", "--version": "version", "-v": "version",
+  // common aliases
+  "dr": "dry-run", "dry-run": "dry-run",
+  "d": "dots", "dots": "dots",
+  "up": "upgrade", "upgrade": "upgrade",
+  "s": "search", "search": "search",
+  "i": "install", "S": "install", "install": "install",
+  "Si": "info", "info": "info",
+  "q": "query", "Q": "query", "query": "query",
+  "ce": "configedit", "configedit": "configedit",
+  "de": "dotedit", "dotedit": "dotedit",
+  "gendb": "gendb",
+  "track": "track",
+  "hide": "hide",
+  "uninstall": "uninstall",
+  "apply": "apply",
+};
 
-  const options: CommandOptions = {
-    noSpinner: restArgs.includes("--no-spinner"), verbose: restArgs.includes("--verbose"), debug: restArgs.includes("--debug"),
-    devel: restArgs.includes("--devel"), useLibALPM: restArgs.includes("--alpm"), bypassCache: restArgs.includes("--bypass-cache"),
-    legacyParser: restArgs.includes("--legacy-parser")
-  };
-
-  if (command === "add") {
-    const exactValue = restArgs.find(a => a.startsWith('--exact='))?.split('=')[1] || (restArgs.includes('--exact') ? restArgs[restArgs.indexOf('--exact') + 1] : undefined);
-    const fileValue = restArgs.find(a => a.startsWith('--file='))?.split('=')[1] || (restArgs.includes('--file') ? restArgs[restArgs.indexOf('--file') + 1] : undefined);
-    const sourceValue = restArgs.find(a => a.startsWith('--source='))?.split('=')[1] || (restArgs.includes('--source') ? restArgs[restArgs.indexOf('--source') + 1] : undefined);
-    options.exact = exactValue; options.file = fileValue; options.source = (sourceValue || 'any') as any;
-    options.yes = restArgs.includes('--yes'); options.json = restArgs.includes('--json'); options.all = restArgs.includes('--all'); options.bypassCache = restArgs.includes('--bypass-cache'); options.dryRun = restArgs.includes('--dry-run');
-    const filteredArgs = restArgs.filter(arg => !arg.startsWith('--') && arg !== exactValue && arg !== fileValue && arg !== sourceValue);
-    return { command, options, args: filteredArgs };
+function getFlagValue(args: string[], key: string, consumed: Set<number>): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (consumed.has(i)) continue;
+    if (a === key && i + 1 < args.length && !args[i + 1].startsWith('--')) {
+      consumed.add(i); consumed.add(i + 1);
+      return args[i + 1];
+    }
+    if (a.startsWith(key + '=')) {
+      consumed.add(i);
+      return a.slice(key.length + 1);
+    }
   }
-
-  if (command === "search" || command === "s") {
-    const limitValue = restArgs.find(a => a.startsWith('--limit='))?.split('=')[1] || (restArgs.includes('--limit') ? restArgs[restArgs.indexOf('--limit') + 1] : undefined);
-    options.aur = restArgs.includes('--aur'); options.repo = restArgs.includes('--repo'); options.limit = limitValue ? parseInt(limitValue, 10) : 50;
-    const filteredArgs = restArgs.filter(arg => !arg.startsWith('--') && arg !== limitValue);
-    return { command, options, args: filteredArgs };
-  }
-
-  if (command === "install" || command === "i" || command === "S") {
-    options.asdeps = restArgs.includes('--asdeps'); options.asexplicit = restArgs.includes('--asexplicit'); options.noconfirm = restArgs.includes('--noconfirm'); options.needed = restArgs.includes('--needed');
-    const filteredArgs = restArgs.filter(arg => !arg.startsWith('--'));
-    return { command, options, args: filteredArgs };
-  }
-
-  if (command === "upgrade" || command === "up") {
-    options.devel = restArgs.includes('--devel'); options.timeupdate = restArgs.includes('--timeupdate'); options.noconfirm = restArgs.includes('--noconfirm');
-    return { command, options, args: restArgs };
-  }
-
-  if (command === "query" || command === "q" || command === "Q") {
-    options.foreign = restArgs.includes('--foreign'); options.explicit = restArgs.includes('--explicit'); options.deps = restArgs.includes('--deps'); options.unrequired = restArgs.includes('--unrequired');
-    const filteredArgs = restArgs.filter(arg => !arg.startsWith('--'));
-    return { command, options, args: filteredArgs };
-  }
-
-  return { command, options, args: restArgs };
+  return undefined;
 }
 
-export const isHelpCommand = (c: Command) => c === "help" || c === "--help" || c === "-h";
-export const isVersionCommand = (c: Command) => c === "version" || c === "--version" || c === "-v";
-export const isUpgradeCommand = (c: Command) => c === "upgrade" || c === "up";
-export const isDryRunCommand = (c: Command) => c === "dry-run" || c === "dr";
+function hasFlag(args: string[], key: string, consumed: Set<number>): boolean {
+  for (let i = 0; i < args.length; i++) {
+    if (consumed.has(i)) continue;
+    if (args[i] === key) { consumed.add(i); return true; }
+  }
+  return false;
+}
+
+export function parseCommand(args: string[]): ParsedCommand {
+  const [rawCmd, ...rest] = args;
+  const resolved = rawCmd ? ALIASES[rawCmd] : ("apply" as Command);
+  if (!resolved) throw new Error(`Unknown command: ${rawCmd}`);
+  const command = resolved as Command;
+  if (!COMMANDS.includes(command)) throw new Error(`Unknown command: ${rawCmd}`);
+
+  const consumed = new Set<number>();
+
+  const options: CommandOptions = {
+    noSpinner: hasFlag(rest, "--no-spinner", consumed),
+    verbose: hasFlag(rest, "--verbose", consumed),
+    debug: hasFlag(rest, "--debug", consumed),
+    devel: hasFlag(rest, "--devel", consumed),
+    useLibALPM: hasFlag(rest, "--alpm", consumed),
+    bypassCache: hasFlag(rest, "--bypass-cache", consumed),
+    legacyParser: hasFlag(rest, "--legacy-parser", consumed),
+  };
+
+  // Common optional flags across commands (parsed generically)
+  const exactValue = getFlagValue(rest, '--exact', consumed);
+  const fileValue = getFlagValue(rest, '--file', consumed);
+  const sourceValue = getFlagValue(rest, '--source', consumed);
+  const limitValue = getFlagValue(rest, '--limit', consumed);
+
+  if (exactValue !== undefined) options.exact = exactValue;
+  if (fileValue !== undefined) options.file = fileValue;
+  if (sourceValue !== undefined) options.source = (sourceValue || 'any') as any;
+  if (limitValue !== undefined) options.limit = parseInt(limitValue, 10);
+
+  // Generic booleans used by specific commands; safe to parse for all
+  if (hasFlag(rest, '--yes', consumed)) options.yes = true;
+  if (hasFlag(rest, '--json', consumed)) options.json = true;
+  if (hasFlag(rest, '--all', consumed)) options.all = true;
+  if (hasFlag(rest, '--dry-run', consumed)) options.dryRun = true;
+  if (hasFlag(rest, '--aur', consumed)) options.aur = true;
+  if (hasFlag(rest, '--repo', consumed)) options.repo = true;
+  if (hasFlag(rest, '--asdeps', consumed)) options.asdeps = true;
+  if (hasFlag(rest, '--asexplicit', consumed)) options.asexplicit = true;
+  if (hasFlag(rest, '--noconfirm', consumed)) options.noconfirm = true;
+  if (hasFlag(rest, '--needed', consumed)) options.needed = true;
+  if (hasFlag(rest, '--timeupdate', consumed)) options.timeupdate = true;
+  if (hasFlag(rest, '--foreign', consumed)) options.foreign = true;
+  if (hasFlag(rest, '--explicit', consumed)) options.explicit = true;
+  if (hasFlag(rest, '--deps', consumed)) options.deps = true;
+  if (hasFlag(rest, '--unrequired', consumed)) options.unrequired = true;
+
+  // Remaining non-option args are positional
+  const positional: string[] = [];
+  rest.forEach((a, idx) => {
+    if (!consumed.has(idx) && !a.startsWith('--')) positional.push(a);
+  });
+
+  return { command, options, args: positional };
+}
+
+export const isHelpCommand = (c: Command) => c === "help";
+export const isVersionCommand = (c: Command) => c === "version";
+export const isUpgradeCommand = (c: Command) => c === "upgrade";
+export const isDryRunCommand = (c: Command) => c === "dry-run";
 export const isDotsCommand = (c: Command) => c === "dots";
 export const isUninstallCommand = (c: Command) => c === "uninstall";
 export const isAddCommand = (c: Command) => c === "add";
-export const isConfigEditCommand = (c: Command) => c === "configedit" || c === "ce";
-export const isDotEditCommand = (c: Command) => c === "dotedit" || c === "de";
-export const isSearchCommand = (c: Command) => c === "search" || c === "s";
-export const isInstallCommand = (c: Command) => c === "install" || c === "i" || c === "S";
-export const isInfoCommand = (c: Command) => c === "info" || c === "Si";
-export const isQueryCommand = (c: Command) => c === "query" || c === "q" || c === "Q";
+export const isConfigEditCommand = (c: Command) => c === "configedit";
+export const isDotEditCommand = (c: Command) => c === "dotedit";
+export const isSearchCommand = (c: Command) => c === "search";
+export const isInstallCommand = (c: Command) => c === "install";
+export const isInfoCommand = (c: Command) => c === "info";
+export const isQueryCommand = (c: Command) => c === "query";
 export const isGendbCommand = (c: Command) => c === "gendb";

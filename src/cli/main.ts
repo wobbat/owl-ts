@@ -31,7 +31,7 @@ function showHelp() {
   console.log("\x1b[1mCommands:\x1b[0m");
   ui.list([
     "apply          Install packages, copy configs, and run setup scripts",
-    "dots           Check and sync only dotfiles configurations",
+    "dots, d        Check and sync only dotfiles configurations",
     "track          Track explicitly-installed packages into Owl configs",
     "hide           Hide packages from track suggestions",
     "add            Search for and add packages to configuration files",
@@ -99,28 +99,76 @@ export async function main() {
       await ensurePacmanAvailable();
     });
 
-    const routes: Partial<Record<Command, (args: string[], options: CommandOptions) => Promise<void>>> = {
-      upgrade: async (_a, o) => timeOperation("upgrade", () => handleUpgradeCommand(o)),
-      up: async (_a, o) => timeOperation("upgrade", () => handleUpgradeCommand(o)),
-      uninstall: async (_a, o) => timeOperation("uninstall", () => handleUninstallCommand(o)),
-      dots: async (a, o) => { const dryRun = a.includes('--dry-run'); await timeOperation("dots", () => handleDotsCommand(dryRun, o)); },
-      add: async (a, o) => { const searchTerms = a.filter(arg => !arg.startsWith('--')); await timeOperation("add", () => handleAddCommand(searchTerms, o)); },
-      search: async (a, o) => { const searchTerms = a.filter(arg => !arg.startsWith('--')); await timeOperation("search", () => handleSearchCommand(searchTerms, o)); },
-      s: async (a, o) => { const searchTerms = a.filter(arg => !arg.startsWith('--')); await timeOperation("search", () => handleSearchCommand(searchTerms, o)); },
-      configedit: async (a, o) => { const target = a.find(arg => !arg.startsWith('--')); await timeOperation("configedit", () => handleConfigEditCommand(target, o)); },
-      ce: async (a, o) => { const target = a.find(arg => !arg.startsWith('--')); await timeOperation("configedit", () => handleConfigEditCommand(target, o)); },
-      dotedit: async (a, o) => { const target = a.find(arg => !arg.startsWith('--')); await timeOperation("dotedit", () => handleDotEditCommand(target, o)); },
-      de: async (a, o) => { const target = a.find(arg => !arg.startsWith('--')); await timeOperation("dotedit", () => handleDotEditCommand(target, o)); },
-      track: async (a, o) => { const { handleTrackCommand } = await import("./handlers/track"); await timeOperation("track", () => handleTrackCommand(a, o)); },
-      hide: async (a, o) => { const { handleHideCommand } = await import("./handlers/track"); await timeOperation("hide", () => handleHideCommand(a, o)); },
-      gendb: async (_a, o) => timeOperation("gendb", () => handleGendbCommand(o)),
-      "dry-run": async (_a, o) => timeOperation("apply", () => handleApplyCommand(true, o)),
-      dr: async (_a, o) => timeOperation("apply", () => handleApplyCommand(true, o)),
-      apply: async (_a, o) => timeOperation("apply", () => handleApplyCommand(false, o)),
-    };
+    // Command dispatch: use a switch for clarity and explicit alias grouping
+    switch (command) {
+      case "upgrade":
+      case "up":
+        await timeOperation("upgrade", () => handleUpgradeCommand(options));
+        break;
 
-    const runner = routes[command] || routes["apply"];
-    await runner!(remainingArgs, options);
+      case "uninstall":
+        await timeOperation("uninstall", () => handleUninstallCommand(options));
+        break;
+
+      case "dots": {
+        const dryRun = remainingArgs.includes('--dry-run');
+        await timeOperation("dots", () => handleDotsCommand(dryRun, options));
+        break;
+      }
+
+      case "add": {
+        const searchTerms = remainingArgs.filter(arg => !arg.startsWith('--'));
+        await timeOperation("add", () => handleAddCommand(searchTerms, options));
+        break;
+      }
+
+      case "search":
+      case "s": {
+        const searchTerms = remainingArgs.filter(arg => !arg.startsWith('--'));
+        await timeOperation("search", () => handleSearchCommand(searchTerms, options));
+        break;
+      }
+
+      case "configedit":
+      case "ce": {
+        const target = remainingArgs.find(arg => !arg.startsWith('--'));
+        await timeOperation("configedit", () => handleConfigEditCommand(target, options));
+        break;
+      }
+
+      case "dotedit":
+      case "de": {
+        const target = remainingArgs.find(arg => !arg.startsWith('--'));
+        await timeOperation("dotedit", () => handleDotEditCommand(target, options));
+        break;
+      }
+
+      case "track": {
+        const { handleTrackCommand } = await import("./handlers/track");
+        await timeOperation("track", () => handleTrackCommand(remainingArgs, options));
+        break;
+      }
+
+      case "hide": {
+        const { handleHideCommand } = await import("./handlers/track");
+        await timeOperation("hide", () => handleHideCommand(remainingArgs, options));
+        break;
+      }
+
+      case "gendb":
+        await timeOperation("gendb", () => handleGendbCommand(options));
+        break;
+
+      case "dry-run":
+      case "dr":
+        await timeOperation("apply", () => handleApplyCommand(true, options));
+        break;
+
+      case "apply":
+      default:
+        await timeOperation("apply", () => handleApplyCommand(false, options));
+        break;
+    }
     // Ensure fast exit with no lingering timers/handles
     process.exit(0);
   } catch (error) {
